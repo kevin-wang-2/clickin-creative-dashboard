@@ -32,7 +32,11 @@ public:
 
     struct PluginState {
         std::string pluginId;
-        std::string loadStatus;  // active | failed | disabled
+        std::string name;
+        std::string version;
+        bool        critical   = false;
+        bool        builtin    = true;
+        std::string loadStatus;   // active | failed | disabled
         std::string failReason;
     };
     std::vector<PluginState> states() const;

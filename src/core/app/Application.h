@@ -1,7 +1,9 @@
 #pragma once
 
+#include "core/app/PluginManager.h"
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace clickin {
 
@@ -21,6 +23,7 @@ public:
     void shutdown();
 
     CoreContext coreContext();
+    std::vector<PluginManager::PluginState> pluginStates() const;
 
 private:
     struct Impl;

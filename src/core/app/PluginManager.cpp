@@ -67,7 +67,10 @@ std::vector<PluginManager::PluginState> PluginManager::states() const {
     std::vector<PluginState> result;
     result.reserve(entries_.size());
     for (const auto& e : entries_) {
-        result.push_back({e.plugin->manifest().pluginId, e.loadStatus, e.failReason});
+        const auto& m = e.plugin->manifest();
+        result.push_back({m.pluginId, m.name, m.version,
+                          m.critical, m.builtin,
+                          e.loadStatus, e.failReason});
     }
     return result;
 }

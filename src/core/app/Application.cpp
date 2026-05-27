@@ -73,6 +73,11 @@ void Application::shutdown() {
     impl_->dbService.reset();
 }
 
+std::vector<PluginManager::PluginState> Application::pluginStates() const {
+    if (!impl_->plugins) return {};
+    return impl_->plugins->states();
+}
+
 CoreContext Application::coreContext() {
     return CoreContext{
         *impl_->dbService,

@@ -4,12 +4,15 @@
 #include "core/services/AssetService.h"
 #include "core/capability/CapabilityBroker.h"
 #include "sdk/contracts/builtin/AssetDiscoveryContract.h"
+#include "sdk/contracts/builtin/AssetOpenActionsContract.h"
 
 #include <QAbstractTableModel>
 #include <QDir>
+#include <QEvent>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QItemSelectionModel>
+#include <QKeyEvent>
 #include <QMenu>
 #include <QMessageBox>
 #include <QTableView>
@@ -93,12 +96,15 @@ AssetListView::AssetListView(clickin::Application& app, QWidget* parent)
 
     layout->addWidget(impl_->table);
 
+    impl_->table->installEventFilter(this);
+
     connect(impl_->table->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex& current, const QModelIndex&) {
         if (!current.isValid()) return;
         emit assetSelected(impl_->model->assetIdAt(current.row()));
     });
-
+    connect(impl_->table, &QTableView::doubleClicked,
+            this, &AssetListView::onDoubleClicked);
     connect(impl_->table, &QTableView::customContextMenuRequested,
             this, &AssetListView::onContextMenuRequested);
 
@@ -129,8 +135,26 @@ void AssetListView::onScanFolder() {
     req.sourceType = "local.folder";
     req.uri        = dir.toStdString();
     ctx.capabilities.invoke<clickin::AssetDiscoveryContract>(ref, req).get();
-
     refresh();
+}
+
+bool AssetListView::eventFilter(QObject* obj, QEvent* ev) {
+    if (obj == impl_->table && ev->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        if (ke->key() == Qt::Key_Space) {
+            auto idx = impl_->table->currentIndex();
+            if (idx.isValid()) {
+                emit previewRequested(impl_->model->assetIdAt(idx.row()));
+                return true;
+            }
+        }
+    }
+    return QWidget::eventFilter(obj, ev);
+}
+
+void AssetListView::onDoubleClicked(const QModelIndex& index) {
+    if (!index.isValid()) return;
+    emit previewRequested(impl_->model->assetIdAt(index.row()));
 }
 
 void AssetListView::onContextMenuRequested(const QPoint& pos) {
@@ -140,8 +164,39 @@ void AssetListView::onContextMenuRequested(const QPoint& pos) {
     QString assetId = impl_->model->assetIdAt(idx.row());
 
     QMenu menu(this);
+
+    // Default preview action (always shown)
+    QAction* previewAct = menu.addAction("Preview");
+    previewAct->setShortcut(Qt::Key_Space);
+
+    menu.addSeparator();
     QAction* detailsAct = menu.addAction("Show Details");
-    if (menu.exec(impl_->table->viewport()->mapToGlobal(pos)) == detailsAct) {
+
+    // Open actions from AssetOpenActionsContract
+    auto ctx = impl_->app.coreContext();
+    clickin::AssetRef ref{assetId.toStdString(), ""};
+    auto actRef = ctx.capabilities.findBest<clickin::AssetOpenActionsContract>(
+        clickin::CapabilityQuery{});
+    std::vector<clickin::AssetAction> openActions;
+    if (actRef.valid()) {
+        openActions = ctx.capabilities
+            .invoke<clickin::AssetOpenActionsContract>(actRef, ref)
+            .get().actions;
+        if (!openActions.empty()) {
+            menu.addSeparator();
+            for (const auto& a : openActions)
+                menu.addAction(QString::fromStdString(a.label))
+                    ->setData(QString::fromStdString(a.id));
+        }
+    }
+
+    QAction* chosen = menu.exec(impl_->table->viewport()->mapToGlobal(pos));
+    if (!chosen) return;
+
+    if (chosen == previewAct) {
+        emit previewRequested(assetId);
+    } else if (chosen == detailsAct) {
         emit showDetailsRequested(assetId);
     }
+    // (future: invoke AssetExecuteActionContract for other actions)
 }

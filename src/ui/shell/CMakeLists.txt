@@ -9,7 +9,7 @@ target_link_libraries(clickin_ui_shell PUBLIC
     clickin_ui_plugin_mgmt
     clickin_ui_inspector
     clickin_ui_job_status
-    clickin_ui_audio_preview
+    clickin_ui_preview_host
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets

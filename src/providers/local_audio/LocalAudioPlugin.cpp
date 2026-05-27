@@ -1,4 +1,5 @@
 #include "providers/local_audio/LocalAudioPlugin.h"
+#include "providers/local_audio/AudioPreviewWidget.h"
 #include "core/app/CoreContext.h"
 #include "core/capability/CapabilityBroker.h"
 #include "core/services/MetadataService.h"
@@ -8,6 +9,7 @@
 #include "sdk/contracts/media/AudioWaveformContract.h"
 #include "sdk/contracts/media/AudioPreviewContract.h"
 #include "sdk/contracts/builtin/AssetLocatorContract.h"
+#include "sdk/contracts/ui/AssetPreviewWidgetContract.h"
 
 #include <algorithm>
 #include <cmath>
@@ -517,6 +519,39 @@ private:
     std::string pluginId_;
 };
 
+// ── AssetPreviewWidgetHandler ─────────────────────────────────────────────────
+
+class AssetPreviewWidgetHandler
+    : public TypedCapabilityHandler<AssetPreviewWidgetContract> {
+public:
+    AssetPreviewWidgetHandler(const std::string& pluginId, CapabilityBroker& broker)
+        : pluginId_(pluginId), broker_(broker) {}
+
+    std::string_view providerId() const override { return pluginId_; }
+
+    CapabilityDescriptor describe(const CapabilityQuery&) override {
+        return {.available = true, .priority = 10};
+    }
+
+protected:
+    CapabilityFuture<AssetPreviewWidgetContract::Result>
+    invokeTyped(const AssetRef& req, CapabilityContext&) override {
+        std::string assetId = req.assetId;
+        CapabilityBroker* brokerPtr = &broker_;
+
+        AssetPreviewWidgetContract::Result result;
+        result.hasPreview = true;
+        result.factory    = [assetId, brokerPtr](QWidget* parent) -> QWidget* {
+            return new AudioPreviewWidget(assetId, brokerPtr, parent);
+        };
+        return CapabilityFuture(std::move(result));
+    }
+
+private:
+    std::string        pluginId_;
+    CapabilityBroker&  broker_;
+};
+
 // ── LocalAudioPlugin ──────────────────────────────────────────────────────────
 
 PluginManifest LocalAudioPlugin::manifest() const {
@@ -527,6 +562,7 @@ void LocalAudioPlugin::initialize(PluginContext& ctx) {
     pluginId_ = ctx.pluginId;
     metadata_ = &ctx.core.metadata;
     cache_    = &ctx.core.cache;
+    broker_   = &ctx.core.capabilities;
 }
 
 void LocalAudioPlugin::shutdown() {}
@@ -534,9 +570,10 @@ void LocalAudioPlugin::shutdown() {}
 std::vector<std::unique_ptr<IRawCapabilityHandler>>
 LocalAudioPlugin::createCapabilityHandlers() {
     std::vector<std::unique_ptr<IRawCapabilityHandler>> h;
-    h.push_back(std::make_unique<AudioMetadataHandler>(pluginId_, *metadata_));
-    h.push_back(std::make_unique<AudioWaveformHandler>(pluginId_, *cache_));
-    h.push_back(std::make_unique<AudioPreviewHandler> (pluginId_));
+    h.push_back(std::make_unique<AudioMetadataHandler>    (pluginId_, *metadata_));
+    h.push_back(std::make_unique<AudioWaveformHandler>    (pluginId_, *cache_));
+    h.push_back(std::make_unique<AudioPreviewHandler>     (pluginId_));
+    h.push_back(std::make_unique<AssetPreviewWidgetHandler>(pluginId_, *broker_));
     return h;
 }
 

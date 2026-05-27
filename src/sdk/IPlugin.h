@@ -1,12 +1,12 @@
 #pragma once
 
+#include "sdk/IRawCapabilityHandler.h"
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace clickin {
 
-class IRawCapabilityHandler;
 class PluginContext;
 
 struct PluginManifest {

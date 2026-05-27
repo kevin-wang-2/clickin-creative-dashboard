@@ -12,14 +12,19 @@ public:
 
 signals:
     void assetSelected(const QString& assetId);
+    void previewRequested(const QString& assetId);   // Space or double-click
     void showDetailsRequested(const QString& assetId);
 
 public slots:
     void refresh();
     void onScanFolder();
 
+protected:
+    bool eventFilter(QObject* obj, QEvent* ev) override;
+
 private slots:
     void onContextMenuRequested(const QPoint& pos);
+    void onDoubleClicked(const QModelIndex& index);
 
 private:
     struct Impl;

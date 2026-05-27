@@ -6,6 +6,7 @@ namespace clickin {
 
 class MetadataService;
 class CacheService;
+class CapabilityBroker;
 
 class LocalAudioPlugin : public IPlugin {
 public:
@@ -15,9 +16,10 @@ public:
     std::vector<std::unique_ptr<IRawCapabilityHandler>> createCapabilityHandlers() override;
 
 private:
-    std::string      pluginId_;
-    MetadataService* metadata_ = nullptr;
-    CacheService*    cache_    = nullptr;
+    std::string        pluginId_;
+    MetadataService*   metadata_ = nullptr;
+    CacheService*      cache_    = nullptr;
+    CapabilityBroker*  broker_   = nullptr;
 };
 
 } // namespace clickin

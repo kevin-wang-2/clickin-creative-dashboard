@@ -12,12 +12,14 @@ public:
 
 signals:
     void assetSelected(const QString& assetId);
+    void showDetailsRequested(const QString& assetId);
 
 public slots:
     void refresh();
+    void onScanFolder();
 
 private slots:
-    void onScanFolder();
+    void onContextMenuRequested(const QPoint& pos);
 
 private:
     struct Impl;

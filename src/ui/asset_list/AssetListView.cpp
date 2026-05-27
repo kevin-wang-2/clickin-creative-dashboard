@@ -8,11 +8,10 @@
 #include <QAbstractTableModel>
 #include <QDir>
 #include <QFileDialog>
-#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
+#include <QMenu>
 #include <QMessageBox>
-#include <QPushButton>
 #include <QTableView>
 #include <QVBoxLayout>
 
@@ -37,14 +36,13 @@ public:
     int rowCount(const QModelIndex& = {}) const override {
         return static_cast<int>(assets_.size());
     }
-    int columnCount(const QModelIndex& = {}) const override { return 3; }
+    int columnCount(const QModelIndex& = {}) const override { return 2; }
 
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override {
         if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
         switch (section) {
             case 0: return "Name";
             case 1: return "Status";
-            case 2: return "ID";
         }
         return {};
     }
@@ -55,7 +53,6 @@ public:
         switch (index.column()) {
             case 0: return QString::fromStdString(a.name);
             case 1: return QString::fromStdString(a.status);
-            case 2: return QString::fromStdString(a.id);
         }
         return {};
     }
@@ -83,16 +80,6 @@ AssetListView::AssetListView(clickin::Application& app, QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
 
-    auto* toolbar       = new QWidget(this);
-    auto* toolbarLayout = new QHBoxLayout(toolbar);
-    toolbarLayout->setContentsMargins(4, 4, 4, 4);
-
-    auto* scanBtn    = new QPushButton("Scan Folder…", toolbar);
-    auto* refreshBtn = new QPushButton("Refresh", toolbar);
-    toolbarLayout->addWidget(scanBtn);
-    toolbarLayout->addWidget(refreshBtn);
-    toolbarLayout->addStretch();
-
     impl_->model = new AssetTableModel(this);
     impl_->table = new QTableView(this);
     impl_->table->setModel(impl_->model);
@@ -100,18 +87,20 @@ AssetListView::AssetListView(clickin::Application& app, QWidget* parent)
     impl_->table->setSelectionMode(QAbstractItemView::SingleSelection);
     impl_->table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     impl_->table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    impl_->table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     impl_->table->verticalHeader()->hide();
+    impl_->table->setContextMenuPolicy(Qt::CustomContextMenu);
 
-    layout->addWidget(toolbar);
-    layout->addWidget(impl_->table, 1);
+    layout->addWidget(impl_->table);
 
-    connect(scanBtn,    &QPushButton::clicked, this, &AssetListView::onScanFolder);
-    connect(refreshBtn, &QPushButton::clicked, this, &AssetListView::refresh);
     connect(impl_->table->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex& current, const QModelIndex&) {
         if (!current.isValid()) return;
         emit assetSelected(impl_->model->assetIdAt(current.row()));
     });
+
+    connect(impl_->table, &QTableView::customContextMenuRequested,
+            this, &AssetListView::onContextMenuRequested);
 
     refresh();
 }
@@ -142,4 +131,17 @@ void AssetListView::onScanFolder() {
     ctx.capabilities.invoke<clickin::AssetDiscoveryContract>(ref, req).get();
 
     refresh();
+}
+
+void AssetListView::onContextMenuRequested(const QPoint& pos) {
+    QModelIndex idx = impl_->table->indexAt(pos);
+    if (!idx.isValid()) return;
+
+    QString assetId = impl_->model->assetIdAt(idx.row());
+
+    QMenu menu(this);
+    QAction* detailsAct = menu.addAction("Show Details");
+    if (menu.exec(impl_->table->viewport()->mapToGlobal(pos)) == detailsAct) {
+        emit showDetailsRequested(assetId);
+    }
 }

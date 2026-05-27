@@ -7,7 +7,7 @@
 
 namespace clickin {
 
-class PluginContext;
+struct PluginContext;
 
 struct PluginManifest {
     std::string pluginId;

@@ -44,11 +44,11 @@ See [`main-prd.md`](main-prd.md) for the full architecture specification.
 | Phase | Status | Description |
 |-------|--------|-------------|
 | 0 — Skeleton | ✅ Done | CMake/Qt6, directory structure, capability system interfaces, stub plugins, GoogleTest |
-| 1 — Capability system | 🔲 Planned | Full `CapabilityBroker` + async `CapabilityFuture`, contract enforcement |
+| 1 — Capability system | 🔁 In review | `CapabilityRegistry` + `CapabilityBroker` + typed dispatch, 11 unit tests ([#11](https://github.com/kevin-wang-2/clickin-creative-dashboard/pull/11)) |
 | 2 — Database layer | 🔲 Planned | SQLite schema, migrations, core services |
-| 2b — Plugin lifecycle | 🔲 Planned | `IPlugin` startup/shutdown, `plugin_registry` table |
-| 3 — Built-in plugins | 🔲 Planned | `local_file` discovery, `local_audio` metadata/waveform/preview |
-| 4 — Qt UI | 🔲 Planned | Asset list, plugin management, inspector, waveform + playback |
+| 3 — Plugin lifecycle | 🔲 Planned | `IPlugin` startup/shutdown, `plugin_registry` table |
+| 4 — Built-in plugins | 🔲 Planned | `local_file` discovery, `local_audio` metadata/waveform/preview |
+| 5 — Qt UI | 🔲 Planned | Asset list, plugin management, inspector, waveform + playback |
 
 Work is tracked under the [MVP Construction milestone](https://github.com/kevin-wang-2/clickin-creative-dashboard/milestone/1).
 

@@ -5,42 +5,67 @@ namespace clickin {
 CapabilityBroker::CapabilityBroker(CapabilityRegistry& registry)
     : registry_(registry) {}
 
+// static helper
+RawResult CapabilityBroker::makeError(std::string_view capability, int version,
+                                       std::string_view errorCode,
+                                       std::string_view message) {
+    RawResult err;
+    err.ok           = false;
+    err.capability   = std::string(capability);
+    err.version      = version;
+    err.errorCode    = std::string(errorCode);
+    err.errorMessage = std::string(message);
+    return err;
+}
+
 CapabilityFuture<RawResult>
 CapabilityBroker::invokeRaw(const CapabilityRef& ref, RawRequest request) {
-    auto* handler = registry_.findHandler(ref);
-    if (!handler) {
-        RawResult err;
-        err.ok           = false;
-        err.capability   = ref.capability;
-        err.version      = ref.version;
-        err.errorCode    = "no_handler";
-        err.errorMessage = "No handler found for capability: " + ref.capability;
-        return CapabilityFuture<RawResult>(std::move(err));
+    const HandlerEntry* entry = registry_.findEntry(ref);
+
+    if (!entry) {
+        return CapabilityFuture<RawResult>(makeError(
+            ref.capability, ref.version,
+            CapabilityError::no_handler,
+            "No handler registered for provider '" + ref.providerId
+                + "' capability '" + ref.capability + "'"
+        ));
     }
 
-    CapabilityContext ctx;
-    return handler->invokeRaw(request, ctx);
+    if (!entry->enabled) {
+        return CapabilityFuture<RawResult>(makeError(
+            ref.capability, ref.version,
+            CapabilityError::handler_unavailable,
+            "Handler for provider '" + ref.providerId + "' is disabled"
+        ));
+    }
+
+    CapabilityContext ctx(*this);
+    return entry->handler->invokeRaw(request, ctx);
 }
 
 CapabilityRef CapabilityBroker::findBest(std::string_view capability, int version,
                                           const CapabilityQuery& query) const {
-    auto handlers = registry_.findHandlers(capability, version);
+    auto entries = registry_.findHandlers(capability, version);
 
-    IRawCapabilityHandler* best     = nullptr;
-    int                    bestPrio = -1;
+    const HandlerEntry* best     = nullptr;
+    int                 bestPrio = -1;
 
-    for (auto* h : handlers) {
-        CapabilityQuery q = query;
-        auto desc = h->describe(q);
+    for (const auto* e : entries) {
+        if (!e->enabled) continue;
+
+        auto desc = e->handler->describe(query);
         if (desc.available && desc.priority > bestPrio) {
             bestPrio = desc.priority;
-            best     = h;
+            best     = e;
         }
     }
 
     if (!best) return {};
-    return CapabilityRef{std::string(best->providerId()),
-                         std::string(capability), version};
+    return CapabilityRef{
+        std::string(best->handler->providerId()),
+        std::string(capability),
+        version
+    };
 }
 
 } // namespace clickin

@@ -70,7 +70,7 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Test (core)
-        run: .\build\tests\core\Release\test_core.exe
+        run: .\build\Release\test_core.exe
 
       - name: Test (providers)
-        run: .\build\tests\providers\Release\test_providers.exe
+        run: .\build\Release\test_providers.exe

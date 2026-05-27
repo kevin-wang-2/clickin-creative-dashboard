@@ -93,7 +93,58 @@ clickin-creative-dashboard/
 - Do not use platform-native audio APIs (CoreAudio, WASAPI) directly in MVP.
 
 **SQLite**
-- Use the bundled SQLite (via CMake FetchContent or vcpkg). Do not rely on a system-installed version for portability.
+- Use the bundled SQLite in `third_party/sqlite/`. Do not rely on a system-installed version for portability.
+
+---
+
+## Database schema migrations
+
+Schema changes are managed by `MigrationRunner` (`src/core/db/Migration.h`). Each migration is a versioned SQL string executed once on startup and recorded in the `schema_migration` table. **Never modify a migration that has already been merged to `main`** — it will not re-run on existing databases.
+
+### Version number convention
+
+| Range | Owner |
+|-------|-------|
+| 1 – 99 | Core (`src/core/db/CoreSchema.cpp`) |
+| 100 × N — 100 × N + 99 | Plugin N (claim a block in the plugin's header) |
+
+Example: `builtin.local_audio` claims version 200–299.
+
+### Adding a new migration
+
+Add a new entry to `coreSchemaV1()` (or your plugin's migration list) with the next available version:
+
+```cpp
+// src/core/db/CoreSchema.cpp
+{
+    .version     = 2,
+    .description = "asset: add duration_ms column",
+    .sql         = "ALTER TABLE asset ADD COLUMN duration_ms INTEGER;"
+}
+```
+
+The runner applies it automatically on the next startup, then never again.
+
+### SQLite DDL limitations
+
+SQLite's `ALTER TABLE` supports only **add column** and **rename column / table**. For anything else (drop column, change column type, reorder columns, add a NOT NULL column to an existing table), use the standard multi-step procedure inside the migration SQL:
+
+```sql
+-- 1. Create new table with the desired schema
+CREATE TABLE asset_new (...);
+-- 2. Copy data
+INSERT INTO asset_new SELECT ... FROM asset;
+-- 3. Drop old table
+DROP TABLE asset;
+-- 4. Rename
+ALTER TABLE asset_new RENAME TO asset;
+```
+
+Put all four steps in a single `.sql` string — the migration runs inside a transaction, so a failure at any step rolls back cleanly and the version is not recorded.
+
+### No automatic rollback
+
+If a migration fails, the transaction is rolled back and the version is **not** written to `schema_migration`. The runner will retry it on the next startup. There is no "downgrade" path — if a broken migration reaches `main`, the fix must come as a new, higher-versioned migration (not by editing the old one).
 
 **Build system**
 - CMake ≥ 3.25 required (for `cmake_path`, presets v3).

@@ -46,8 +46,8 @@ See [`main-prd.md`](main-prd.md) for the full architecture specification.
 | 0 — Skeleton | ✅ Done | CMake/Qt6, directory structure, capability system interfaces, stub plugins, GoogleTest |
 | 1 — Capability system | ✅ Done | `CapabilityRegistry` + `CapabilityBroker` + typed dispatch, 11 unit tests |
 | 2 — Database layer | ✅ Done | SQLite wrapper, idempotent migrations, `DatabaseService`, all core services |
-| 3 — Plugin lifecycle | 🔁 In review | `PluginManager` activation/shutdown, `plugin_registry` table, error isolation ([#13](https://github.com/kevin-wang-2/clickin-creative-dashboard/pull/13)) |
-| 4 — Built-in plugins | 🔲 Planned | `local_file` discovery, `local_audio` metadata/waveform/preview |
+| 3 — Plugin lifecycle | ✅ Done | `PluginManager` activation/shutdown, `plugin_registry` table, error isolation ([#13](https://github.com/kevin-wang-2/clickin-creative-dashboard/pull/13)) |
+| 4 — Built-in plugins | 🚧 In progress | `local_file` ✅ · `local_audio` 🔲 · `core_asset` 🔲 |
 | 5 — Qt UI | 🔲 Planned | Asset list, plugin management, inspector, waveform + playback |
 
 Work is tracked under the [MVP Construction milestone](https://github.com/kevin-wang-2/clickin-creative-dashboard/milestone/1).

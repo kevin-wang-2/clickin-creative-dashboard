@@ -1,0 +1,26 @@
+{
+  // This file is a fallback for IntelliSense when cmake-tools is NOT active
+  // (e.g., opening a single file outside a workspace).
+  // When cmake-tools is active it overrides this via compile_commands.json.
+  "configurations": [
+    {
+      "name": "macOS",
+      "compileCommands": "${workspaceFolder}/build/macos-debug/compile_commands.json",
+      "cStandard": "c17",
+      "cppStandard": "c++20",
+      "intelliSenseMode": "macos-clang-arm64",
+      "macFrameworkPath": [
+        "/System/Library/Frameworks",
+        "/Library/Frameworks"
+      ]
+    },
+    {
+      "name": "Windows",
+      "compileCommands": "${workspaceFolder}/build/windows-debug/compile_commands.json",
+      "cStandard": "c17",
+      "cppStandard": "c++20",
+      "intelliSenseMode": "windows-msvc-x64"
+    }
+  ],
+  "version": 4
+}

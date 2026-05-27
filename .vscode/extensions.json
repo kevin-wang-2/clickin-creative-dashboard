@@ -1,0 +1,14 @@
+{
+  "recommendations": [
+    // CMake build system — handles configure, build, IntelliSense wiring
+    "ms-vscode.cmake-tools",
+    // C/C++ IntelliSense via compile_commands.json (use one of the two below)
+    "ms-vscode.cpptools",           // Microsoft C/C++ extension (simpler setup)
+    "llvm-vs-code-extensions.vscode-clangd", // clangd (faster, recommended for large projects)
+    // Syntax highlighting for CMake files
+    "twxs.cmake",
+    // Formatting
+    "xaver.clang-format"
+  ],
+  "unwantedRecommendations": []
+}

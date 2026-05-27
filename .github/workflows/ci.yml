@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── macOS ──────────────────────────────────────────────────────────────────
+  build-macos:
+    name: Build & Test (macOS)
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: 'mac'
+          target: 'desktop'
+          modules: 'qtmultimedia'
+          cache: true
+
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}"
+
+      - name: Build
+        run: cmake --build build --parallel $(sysctl -n hw.logicalcpu)
+
+      - name: Test (core)
+        run: ./build/tests/core/test_core
+
+      - name: Test (providers)
+        run: ./build/tests/providers/test_providers
+
+  # ── Windows ────────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build & Test (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtmultimedia'
+          cache: true
+
+      - name: Configure
+        run: |
+          cmake -B build `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test (core)
+        run: .\build\tests\core\Release\test_core.exe
+
+      - name: Test (providers)
+        run: .\build\tests\providers\Release\test_providers.exe

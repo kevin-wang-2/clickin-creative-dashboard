@@ -1,0 +1,62 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    // ── Configure ─────────────────────────────────────────────────────────────
+    {
+      "label": "CMake: Configure (macOS Debug)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--preset", "macos-debug"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+
+    // ── Build ─────────────────────────────────────────────────────────────────
+    {
+      "label": "CMake: Build (macOS Debug)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build", "${workspaceFolder}/build/macos-debug"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": "$gcc",
+      "dependsOn": "CMake: Configure (macOS Debug)"
+    },
+
+    // ── Tests ─────────────────────────────────────────────────────────────────
+    {
+      "label": "Run: Core Tests",
+      "type": "shell",
+      "command": "${workspaceFolder}/build/macos-debug/tests/core/test_core",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "test", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": [],
+      "dependsOn": "CMake: Build (macOS Debug)"
+    },
+    {
+      "label": "Run: Provider Tests",
+      "type": "shell",
+      "command": "${workspaceFolder}/build/macos-debug/tests/providers/test_providers",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": [],
+      "dependsOn": "CMake: Build (macOS Debug)"
+    },
+    {
+      "label": "Run: All Tests",
+      "dependsOn": ["Run: Core Tests", "Run: Provider Tests"],
+      "dependsOrder": "sequence",
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

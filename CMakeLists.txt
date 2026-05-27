@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.25)
 project(ClickinCreativeDashboard
     VERSION 0.1.0
     DESCRIPTION "Modular asset browser"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 set(CMAKE_CXX_STANDARD 20)
@@ -22,12 +22,9 @@ find_package(Qt6 REQUIRED COMPONENTS
 )
 qt_standard_project_setup()
 
-# ── SQLite ────────────────────────────────────────────────────────────────────
-# Phase 0: use system SQLite (available on macOS; install via vcpkg on Windows).
-# Phase 2 will switch to a bundled amalgamation for full cross-platform control.
-find_package(SQLite3 REQUIRED)
-add_library(sqlite3_lib INTERFACE)
-target_link_libraries(sqlite3_lib INTERFACE SQLite::SQLite3)
+# ── SQLite (vendored amalgamation) ────────────────────────────────────────────
+# third_party/sqlite/ contains sqlite3.h + sqlite3.c — no package manager needed.
+add_subdirectory(third_party/sqlite)
 
 # ── GoogleTest ────────────────────────────────────────────────────────────────
 include(FetchContent)
@@ -39,6 +36,6 @@ FetchContent_Declare(
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
-# ── Subdirectories ─────────────────────────────────────────────────────────────
+# ── Subdirectories ────────────────────────────────────────────────────────────
 add_subdirectory(src)
 add_subdirectory(tests)

@@ -3,3 +3,5 @@ build/
 *.user
 .DS_Store
 compile_commands.json
+# Local machine-specific Qt paths — copy CMakeUserPresets.json.template and fill in
+CMakeUserPresets.json

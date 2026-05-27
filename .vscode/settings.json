@@ -1,0 +1,54 @@
+{
+  // ── CMake Tools ───────────────────────────────────────────────────────────
+  // Use CMakePresets.json for configure/build presets
+  "cmake.useCMakePresets": "always",
+  // Build output goes into build/<presetName>/
+  "cmake.buildDirectory": "${workspaceFolder}/build/${presetName}",
+  // Default preset for macOS development — override in CMakeUserPresets.json
+  "cmake.configurePreset": "macos-debug",
+  "cmake.buildPreset":     "macos-debug",
+
+  // ── IntelliSense provider ─────────────────────────────────────────────────
+  // cmake-tools feeds IntelliSense from compile_commands.json automatically.
+  // If you prefer clangd, set clangd.arguments below instead.
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  // Suppress the "select a configuration" prompt when cmake-tools is active
+  "C_Cpp.intelliSenseEngine": "default",
+
+  // clangd (alternative to cpptools — uncomment if you use vscode-clangd):
+  // "clangd.arguments": [
+  //   "--compile-commands-dir=${workspaceFolder}/build/macos-debug",
+  //   "--background-index",
+  //   "--clang-tidy",
+  //   "--header-insertion=never"
+  // ],
+
+  // ── Editor ────────────────────────────────────────────────────────────────
+  "editor.formatOnSave": true,
+  "editor.rulers": [100],
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+
+  // Treat all .h files as C++ (not C) since all headers are C++
+  "files.associations": {
+    "*.h": "cpp"
+  },
+
+  // ── Clang-format ─────────────────────────────────────────────────────────
+  "[cpp]": {
+    "editor.defaultFormatter": "xaver.clang-format"
+  },
+  "[c]": {
+    "editor.defaultFormatter": "xaver.clang-format"
+  },
+
+  // ── File excludes (keeps the explorer clean) ──────────────────────────────
+  "files.exclude": {
+    "build/": true,
+    "**/__pycache__": true
+  },
+  "search.exclude": {
+    "build/": true,
+    "third_party/": true
+  }
+}

@@ -1,0 +1,47 @@
+{
+  // Copy this file to CMakeUserPresets.json (git-ignored) and fill in your local Qt paths.
+  // CMakeUserPresets.json extends CMakePresets.json — presets here override or inherit from it.
+  "version": 3,
+  "configurePresets": [
+    {
+      // ── macOS (Homebrew Qt) ───────────────────────────────────────────────
+      // Use this when Qt is installed via Homebrew (brew install qtbase qtmultimedia).
+      // Find your Qt version: brew info qtbase | head -1
+      "name": "macos-debug",
+      "inherits": "macos-debug",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "/opt/homebrew/Cellar/qtbase/6.11.1;/opt/homebrew/Cellar/qtmultimedia/6.11.1",
+        "Qt6Multimedia_DIR": "/opt/homebrew/Cellar/qtmultimedia/6.11.1/lib/cmake/Qt6Multimedia"
+      }
+    },
+    {
+      "name": "macos-release",
+      "inherits": "macos-release",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "/opt/homebrew/Cellar/qtbase/6.11.1;/opt/homebrew/Cellar/qtmultimedia/6.11.1",
+        "Qt6Multimedia_DIR": "/opt/homebrew/Cellar/qtmultimedia/6.11.1/lib/cmake/Qt6Multimedia"
+      }
+    },
+
+    {
+      // ── macOS (Qt online installer) ───────────────────────────────────────
+      // Alternative: Qt installed to ~/Qt via the official installer.
+      // Uncomment and adjust the version/arch path as needed.
+      // "name": "macos-debug",
+      // "inherits": "macos-debug",
+      // "cacheVariables": {
+      //   "CMAKE_PREFIX_PATH": "$env{HOME}/Qt/6.8.3/macos"
+      // }
+    },
+
+    {
+      // ── Windows (Qt online installer + MSVC) ─────────────────────────────
+      // Adjust the Qt version and install path as needed.
+      // "name": "windows-debug",
+      // "inherits": "windows-debug",
+      // "cacheVariables": {
+      //   "CMAKE_PREFIX_PATH": "C:/Qt/6.8.3/msvc2022_64"
+      // }
+    }
+  ]
+}

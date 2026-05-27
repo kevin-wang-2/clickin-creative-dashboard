@@ -1,23 +1,31 @@
 #pragma once
-#include "core/types/RawPayload.h"
+
 #include <string>
 #include <vector>
 
 namespace clickin {
 
+class Database;
+
+using AssetId = std::string;
+
 struct AssetRecord {
     AssetId     id;
     std::string name;
-    std::string status;   // active, missing, deleted
+    std::string status;   // active | missing | deleted
 };
 
 class AssetService {
 public:
-    // Phase 2 will provide a real implementation backed by DatabaseService.
-    std::vector<AssetRecord> listAssets();
-    AssetRecord              getAsset(const AssetId& id);
+    explicit AssetService(Database& db);
+
+    std::vector<AssetRecord> listAssets() const;
+    AssetRecord              getAsset(const AssetId& id) const;
     AssetId                  createAsset(const std::string& name);
     void                     deleteAsset(const AssetId& id);
+
+private:
+    Database& db_;
 };
 
 } // namespace clickin

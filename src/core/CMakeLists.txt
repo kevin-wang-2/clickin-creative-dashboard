@@ -14,6 +14,7 @@ add_library(clickin_core STATIC
     services/SettingsService.cpp
     app/CoreContext.cpp
     app/Application.cpp
+    app/PluginManager.cpp
 )
 
 target_include_directories(clickin_core PUBLIC

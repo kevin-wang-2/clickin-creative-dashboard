@@ -3,7 +3,8 @@
 namespace clickin {
 
 std::vector<Migration> coreSchemaV1() {
-    return {{
+    return {
+    {
         .version     = 1,
         .description = "Core tables: asset, metadata, cache, job, plugin_registry, settings",
         .sql         = R"sql(
@@ -88,6 +89,12 @@ CREATE TABLE settings (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 )sql"
+    },
+    {
+        .version     = 2,
+        .description = "plugin_registry: add load_status column",
+        .sql         = "ALTER TABLE plugin_registry ADD COLUMN"
+                       " load_status TEXT NOT NULL DEFAULT 'active';"
     }};
 }
 

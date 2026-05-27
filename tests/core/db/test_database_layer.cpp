@@ -36,16 +36,18 @@ protected:
 // ── Migration ─────────────────────────────────────────────────────────────────
 
 TEST_F(DbTest, CoreTablesExistAfterInit) {
-    // schema_migration must have exactly 1 row (version 1)
+    // schema_migration must have exactly 2 rows (v1 core tables, v2 load_status column)
     auto stmt = db().prepare("SELECT version FROM schema_migration ORDER BY version;");
     ASSERT_TRUE(stmt.has_value());
     ASSERT_TRUE(stmt->step());
     EXPECT_EQ(stmt->columnInt64(0), 1);
-    EXPECT_FALSE(stmt->step());  // no more rows
+    ASSERT_TRUE(stmt->step());
+    EXPECT_EQ(stmt->columnInt64(0), 2);
+    EXPECT_FALSE(stmt->step());
 }
 
 TEST_F(DbTest, SecondInitSkipsMigration) {
-    // Re-open the same file — runPending should detect v1 is already applied.
+    // Re-open the same file — runPending should skip already-applied migrations.
     svc_.reset();
     DatabaseService svc2(path_);
     ASSERT_TRUE(svc2.initialize());
@@ -53,7 +55,7 @@ TEST_F(DbTest, SecondInitSkipsMigration) {
     auto stmt = svc2.db().prepare("SELECT count(*) FROM schema_migration;");
     ASSERT_TRUE(stmt.has_value());
     stmt->step();
-    EXPECT_EQ(stmt->columnInt64(0), 1);  // still only 1 row
+    EXPECT_EQ(stmt->columnInt64(0), 2);  // still only 2 rows, none re-applied
 }
 
 TEST_F(DbTest, PluginMigrationAddedBeforeInit) {

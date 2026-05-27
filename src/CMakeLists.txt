@@ -9,6 +9,8 @@ qt_add_executable(ClickinDashboard
 )
 
 target_link_libraries(ClickinDashboard PRIVATE
+    clickin_core
+    clickin_providers
     clickin_ui_shell
     Qt6::Core
     Qt6::Gui

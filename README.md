@@ -44,8 +44,8 @@ See [`main-prd.md`](main-prd.md) for the full architecture specification.
 | Phase | Status | Description |
 |-------|--------|-------------|
 | 0 — Skeleton | ✅ Done | CMake/Qt6, directory structure, capability system interfaces, stub plugins, GoogleTest |
-| 1 — Capability system | 🔁 In review | `CapabilityRegistry` + `CapabilityBroker` + typed dispatch, 11 unit tests ([#11](https://github.com/kevin-wang-2/clickin-creative-dashboard/pull/11)) |
-| 2 — Database layer | 🔲 Planned | SQLite schema, migrations, core services |
+| 1 — Capability system | ✅ Done | `CapabilityRegistry` + `CapabilityBroker` + typed dispatch, 11 unit tests |
+| 2 — Database layer | 🔁 In review | SQLite wrapper, idempotent migrations, `DatabaseService`, all core services ([#12](https://github.com/kevin-wang-2/clickin-creative-dashboard/pull/12)) |
 | 3 — Plugin lifecycle | 🔲 Planned | `IPlugin` startup/shutdown, `plugin_registry` table |
 | 4 — Built-in plugins | 🔲 Planned | `local_file` discovery, `local_audio` metadata/waveform/preview |
 | 5 — Qt UI | 🔲 Planned | Asset list, plugin management, inspector, waveform + playback |

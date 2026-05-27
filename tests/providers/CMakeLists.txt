@@ -2,6 +2,7 @@ add_executable(test_providers
     test_plugin_manifests.cpp
     test_local_file_plugin.cpp
     test_local_audio_plugin.cpp
+    test_core_asset_plugin.cpp
 )
 
 target_link_libraries(test_providers PRIVATE

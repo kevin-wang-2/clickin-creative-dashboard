@@ -170,14 +170,22 @@ Use the following labels:
 ### macOS
 
 ```bash
-# Install Qt6 (via Homebrew or Qt online installer)
-brew install qt@6
+# Install Qt6 modules (Homebrew splits them across formulae)
+brew install qtbase qtmultimedia ninja
 
-# Configure
-cmake -B build -DCMAKE_PREFIX_PATH=$(brew --prefix qt@6) -DCMAKE_BUILD_TYPE=Debug
+# Configure — pass both qtbase and qtmultimedia prefix paths,
+# plus the Multimedia cmake dir explicitly (Homebrew installs it separately)
+cmake -B build/macos-debug -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix qtbase);$(brew --prefix qtmultimedia)" \
+  -DQt6Multimedia_DIR=$(brew --prefix qtmultimedia)/lib/cmake/Qt6Multimedia
 
 # Build
-cmake --build build -j$(sysctl -n hw.logicalcpu)
+cmake --build build/macos-debug
+
+# Test
+./build/macos-debug/tests/core/test_core
+./build/macos-debug/tests/providers/test_providers
 ```
 
 ### Windows

@@ -1,0 +1,6 @@
+add_subdirectory(shell)
+add_subdirectory(asset_list)
+add_subdirectory(plugin_mgmt)
+add_subdirectory(inspector)
+add_subdirectory(job_status)
+add_subdirectory(audio_preview)

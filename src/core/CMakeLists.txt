@@ -3,13 +3,15 @@ add_library(clickin_core STATIC
     capability/CapabilityFuture.cpp
     capability/CapabilityRegistry.cpp
     capability/CapabilityBroker.cpp
+    db/Database.cpp
+    db/Migration.cpp
+    db/CoreSchema.cpp
+    services/DatabaseService.cpp
     services/AssetService.cpp
     services/MetadataService.cpp
     services/CacheService.cpp
     services/JobService.cpp
     services/SettingsService.cpp
-    db/Database.cpp
-    db/Migration.cpp
     app/CoreContext.cpp
     app/Application.cpp
 )

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/services/DatabaseService.h"
 #include "core/services/AssetService.h"
 #include "core/services/MetadataService.h"
 #include "core/services/CacheService.h"
@@ -10,6 +11,7 @@
 namespace clickin {
 
 struct CoreContext {
+    DatabaseService&   database;
     AssetService&      assets;
     MetadataService&   metadata;
     CacheService&      cache;

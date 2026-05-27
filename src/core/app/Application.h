@@ -1,17 +1,21 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 namespace clickin {
 
-// Owns all core services and orchestrates the MVP startup sequence (PRD §6.2).
+struct CoreContext;
+
 class Application {
 public:
     Application();
     ~Application();
 
-    bool initialize();  // Returns false if a critical service fails
+    bool initialize(const std::string& dbPath);
     void shutdown();
+
+    CoreContext coreContext();
 
 private:
     struct Impl;

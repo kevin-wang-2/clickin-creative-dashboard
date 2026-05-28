@@ -4,7 +4,9 @@
 #include "core/services/AssetService.h"
 #include "core/capability/CapabilityBroker.h"
 #include "sdk/contracts/builtin/AssetDiscoveryContract.h"
+#include "sdk/contracts/builtin/AssetKindContract.h"
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
+#include "sdk/contracts/builtin/AssetRef.h"
 
 #include <QAbstractTableModel>
 #include <QDir>
@@ -119,6 +121,22 @@ AssetListView::~AssetListView() = default;
 void AssetListView::refresh() {
     auto ctx    = impl_->app.coreContext();
     auto assets = ctx.assets.listAssets();
+
+    // Backfill kind for assets that predate the kind column.
+    // Once stored it won't be re-queried on subsequent refreshes.
+    auto kindRef = ctx.capabilities.findBest<clickin::AssetKindContract>(clickin::CapabilityQuery{});
+    if (kindRef.valid()) {
+        for (auto& a : assets) {
+            if (!a.kind.empty()) continue;
+            auto result = ctx.capabilities
+                .invoke<clickin::AssetKindContract>(kindRef, clickin::AssetRef{a.id}).get();
+            if (!result.kind.empty() && result.confidence > 0) {
+                ctx.assets.setAssetKind(a.id, result.kind);
+                a.kind = result.kind;
+            }
+        }
+    }
+
     impl_->model->setAssets(std::move(assets));
 }
 

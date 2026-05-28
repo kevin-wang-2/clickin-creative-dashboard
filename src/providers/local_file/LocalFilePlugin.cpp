@@ -126,23 +126,22 @@ protected:
         if (audioFiles.empty()) return CapabilityFuture(result);
 
         // ── Phase 2: find/create root folder asset and clear stale hierarchy ──
-        std::string rootUri     = "file://" + root.string();
+        std::string rootStr = root.string();
+        std::string rootUri = "file://" + rootStr;
         std::string rootAssetId = assets_.findAssetByUri(rootUri);
         if (rootAssetId.empty()) {
             rootAssetId = assets_.createAsset(root.filename().string(), "folder");
             assets_.createAssetProvider(rootAssetId, pluginId_, rootUri);
-            storeFilePath(meta_, pluginId_, rootAssetId, root.string());
+            storeFilePath(meta_, pluginId_, rootAssetId, rootStr);
         }
 
-        hier_.removeAllByPlugin(pluginId_, rootAssetId);
-        hier_.markNode(pluginId_, rootAssetId);
+        hier_.removeAllByPlugin(pluginId_);
+        std::string rootNodeId = hier_.createNode(pluginId_, rootAssetId);
 
-        // Cache for already-seen directory assets (uri → assetId) to avoid
-        // repeated DB lookups when multiple audio files share ancestors.
+        // Cache for already-seen directory nodes (path → nodeId) to avoid
+        // creating duplicate nodes when multiple audio files share ancestors.
         std::unordered_map<std::string, std::string> dirCache;
-        dirCache[rootUri] = rootAssetId;
-
-        std::string rootStr = root.string();
+        dirCache[rootStr] = rootNodeId;
 
         // ── Phase 3: build hierarchy along each audio file's ancestor chain ───
         for (auto& [filePath, kind] : audioFiles) {
@@ -155,25 +154,27 @@ protected:
             }
             std::reverse(ancestors.begin(), ancestors.end()); // root-child first
 
-            std::string parentId = rootAssetId;
+            std::string parentNodeId = rootNodeId;
             for (auto& ancestor : ancestors) {
-                std::string uri = "file://" + ancestor.string();
-                auto it = dirCache.find(uri);
-                std::string folderId;
+                std::string ancestorPath = ancestor.string();
+                auto it = dirCache.find(ancestorPath);
+                std::string folderNodeId;
                 if (it != dirCache.end()) {
-                    folderId = it->second;
+                    folderNodeId = it->second;
                 } else {
-                    folderId = assets_.findAssetByUri(uri);
+                    std::string uri      = "file://" + ancestorPath;
+                    std::string folderId = assets_.findAssetByUri(uri);
                     if (folderId.empty()) {
                         folderId = assets_.createAsset(
                             ancestor.filename().string(), "folder");
                         assets_.createAssetProvider(folderId, pluginId_, uri);
-                        storeFilePath(meta_, pluginId_, folderId, ancestor.string());
+                        storeFilePath(meta_, pluginId_, folderId, ancestorPath);
                     }
-                    dirCache[uri] = folderId;
-                    hier_.addParent(pluginId_, parentId, folderId);
+                    folderNodeId = hier_.createNode(pluginId_, folderId);
+                    dirCache[ancestorPath] = folderNodeId;
+                    hier_.addEdge(parentNodeId, folderNodeId);
                 }
-                parentId = folderId;
+                parentNodeId = folderNodeId;
             }
 
             // Create/find the audio file asset and link under its immediate parent.
@@ -188,7 +189,8 @@ protected:
                 storeFilePath(meta_, pluginId_, fileAssetId, filePath.string());
                 result.assets.push_back({name, pluginId_, {}, size});
             }
-            hier_.addParent(pluginId_, parentId, fileAssetId);
+            std::string fileNodeId = hier_.createNode(pluginId_, fileAssetId);
+            hier_.addEdge(parentNodeId, fileNodeId);
         }
 
         return CapabilityFuture(result);

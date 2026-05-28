@@ -5,7 +5,6 @@
 #include "core/services/HierarchyService.h"
 #include "core/capability/CapabilityBroker.h"
 #include "sdk/contracts/builtin/AssetDiscoveryContract.h"
-#include "sdk/contracts/builtin/AssetKindContract.h"
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
 #include "sdk/contracts/builtin/AssetRef.h"
 #include "sdk/contracts/builtin/AssetSearchContract.h"
@@ -36,24 +35,31 @@ public:
     explicit AssetTableModel(QObject* parent = nullptr)
         : QAbstractTableModel(parent) {}
 
-    void setAssets(std::vector<clickin::AssetRecord> assets) {
+    void setNodes(std::vector<clickin::NodeRecord> nodes) {
         beginResetModel();
-        assets_ = std::move(assets);
+        nodes_ = std::move(nodes);
         endResetModel();
     }
 
+    // nodeId for hierarchy navigation; may be empty for flat search results.
+    QString nodeIdAt(int row) const {
+        if (row < 0 || row >= static_cast<int>(nodes_.size())) return {};
+        return QString::fromStdString(nodes_[row].nodeId);
+    }
+
+    // assetId for capability queries (preview, open actions, etc.).
     QString assetIdAt(int row) const {
-        if (row < 0 || row >= static_cast<int>(assets_.size())) return {};
-        return QString::fromStdString(assets_[row].id);
+        if (row < 0 || row >= static_cast<int>(nodes_.size())) return {};
+        return QString::fromStdString(nodes_[row].assetId);
     }
 
     QString kindAt(int row) const {
-        if (row < 0 || row >= static_cast<int>(assets_.size())) return {};
-        return QString::fromStdString(assets_[row].kind);
+        if (row < 0 || row >= static_cast<int>(nodes_.size())) return {};
+        return QString::fromStdString(nodes_[row].kind);
     }
 
     int rowCount(const QModelIndex& = {}) const override {
-        return static_cast<int>(assets_.size());
+        return static_cast<int>(nodes_.size());
     }
     int columnCount(const QModelIndex& = {}) const override { return 3; }
 
@@ -69,22 +75,23 @@ public:
 
     QVariant data(const QModelIndex& index, int role) const override {
         if (!index.isValid() || role != Qt::DisplayRole) return {};
-        const auto& a = assets_[index.row()];
+        const auto& n = nodes_[index.row()];
         switch (index.column()) {
-            case 0: return QString::fromStdString(a.name);
-            case 1: return a.kind.empty() ? QString("—") : QString::fromStdString(a.kind);
-            case 2: return QString::fromStdString(a.status);
+            case 0: return QString::fromStdString(n.name);
+            case 1: return n.kind.empty() ? QString("—") : QString::fromStdString(n.kind);
+            case 2: return QString::fromStdString(n.status);
         }
         return {};
     }
 
 private:
-    std::vector<clickin::AssetRecord> assets_;
+    std::vector<clickin::NodeRecord> nodes_;
 };
 
 // ── Impl ──────────────────────────────────────────────────────────────────────
 
 struct NavEntry {
+    QString nodeId;
     QString assetId;
     QString name;
 };
@@ -171,42 +178,18 @@ void AssetListView::refresh() {
 void AssetListView::loadCurrentLevel() {
     auto ctx = impl_->app.coreContext();
 
-    std::vector<clickin::AssetRecord> assets;
-
     if (impl_->navStack.empty()) {
-        // Root: prefer hierarchy nodes, fall back to flat list.
-        auto nodes = ctx.hierarchy.getAllNodes();
-        if (!nodes.empty()) {
-            assets = std::move(nodes);
-        } else {
-            assets = ctx.assets.listAssets();
-            // Backfill kind for assets that predate the kind column.
-            auto kindRef = ctx.capabilities.findBest<clickin::AssetKindContract>(
-                clickin::CapabilityQuery{});
-            if (kindRef.valid()) {
-                for (auto& a : assets) {
-                    if (!a.kind.empty()) continue;
-                    auto result = ctx.capabilities
-                        .invoke<clickin::AssetKindContract>(kindRef, clickin::AssetRef{a.id})
-                        .get();
-                    if (!result.kind.empty() && result.confidence > 0) {
-                        ctx.assets.setAssetKind(a.id, result.kind);
-                        a.kind = result.kind;
-                    }
-                }
-            }
-        }
+        impl_->model->setNodes(ctx.hierarchy.getRootNodes());
     } else {
-        const QString& parentId = impl_->navStack.back().assetId;
-        assets = ctx.hierarchy.getAllChildren(parentId.toStdString());
+        const QString& parentNodeId = impl_->navStack.back().nodeId;
+        impl_->model->setNodes(ctx.hierarchy.getChildNodes(parentNodeId.toStdString()));
     }
-
-    impl_->model->setAssets(std::move(assets));
 }
 
-void AssetListView::navigateInto(const QString& assetId, const QString& name) {
+void AssetListView::navigateInto(const QString& nodeId, const QString& assetId,
+                                  const QString& name) {
     if (static_cast<int>(impl_->navStack.size()) >= kMaxNavDepth) return;
-    impl_->navStack.push_back({assetId, name});
+    impl_->navStack.push_back({nodeId, assetId, name});
     rebuildBreadcrumb();
     impl_->searchBar->clear();
     loadCurrentLevel();
@@ -292,7 +275,8 @@ bool AssetListView::eventFilter(QObject* obj, QEvent* ev) {
             if (idx.isValid()) {
                 if (impl_->model->kindAt(idx.row()) == "folder") {
                     QModelIndex nameIdx = impl_->model->index(idx.row(), 0);
-                    navigateInto(impl_->model->assetIdAt(idx.row()),
+                    navigateInto(impl_->model->nodeIdAt(idx.row()),
+                                 impl_->model->assetIdAt(idx.row()),
                                  impl_->model->data(nameIdx, Qt::DisplayRole).toString());
                 } else {
                     emit previewRequested(impl_->model->assetIdAt(idx.row()));
@@ -306,13 +290,13 @@ bool AssetListView::eventFilter(QObject* obj, QEvent* ev) {
 
 void AssetListView::onDoubleClicked(const QModelIndex& index) {
     if (!index.isValid()) return;
-    QString assetId = impl_->model->assetIdAt(index.row());
     if (impl_->model->kindAt(index.row()) == "folder") {
         QModelIndex nameIdx = impl_->model->index(index.row(), 0);
-        QString name = impl_->model->data(nameIdx, Qt::DisplayRole).toString();
-        navigateInto(assetId, name);
+        navigateInto(impl_->model->nodeIdAt(index.row()),
+                     impl_->model->assetIdAt(index.row()),
+                     impl_->model->data(nameIdx, Qt::DisplayRole).toString());
     } else {
-        emit previewRequested(assetId);
+        emit previewRequested(impl_->model->assetIdAt(index.row()));
     }
 }
 
@@ -367,7 +351,9 @@ void AssetListView::onContextMenuRequested(const QPoint& pos) {
 
     if (chosen == openFolderAct) {
         QModelIndex nameIdx = impl_->model->index(idx.row(), 0);
-        navigateInto(assetId, impl_->model->data(nameIdx, Qt::DisplayRole).toString());
+        navigateInto(impl_->model->nodeIdAt(idx.row()),
+                     assetId,
+                     impl_->model->data(nameIdx, Qt::DisplayRole).toString());
         return;
     }
     if (chosen == previewAct) {
@@ -429,5 +415,17 @@ void AssetListView::onSearchDebounced() {
     req.query = query.toStdString();
     auto results = ctx.capabilities
         .invoke<clickin::AssetSearchContract>(ref, req).get();
-    impl_->model->setAssets(std::move(results.assets));
+
+    // Search results are flat (no hierarchy position), so nodeId is empty.
+    std::vector<clickin::NodeRecord> nodes;
+    nodes.reserve(results.assets.size());
+    for (const auto& a : results.assets) {
+        clickin::NodeRecord r;
+        r.assetId = a.id;
+        r.name    = a.name;
+        r.kind    = a.kind;
+        r.status  = a.status;
+        nodes.push_back(std::move(r));
+    }
+    impl_->model->setNodes(std::move(nodes));
 }

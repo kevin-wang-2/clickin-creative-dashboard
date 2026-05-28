@@ -9,11 +9,16 @@
 #include "sdk/contracts/builtin/AssetKindContract.h"
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
 
+#include <QDesktopServices>
 #include <QGroupBox>
 #include <QLabel>
+#include <QProcess>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
+#include <array>
 #include <filesystem>
 #include <set>
 #include <string>
@@ -221,9 +226,14 @@ public:
 protected:
     CapabilityFuture<AssetOpenActionsContract::Result>
     invokeTyped(const AssetOpenActionsContract::Request&, CapabilityContext&) override {
-        return CapabilityFuture(AssetOpenActionsContract::Result{
-            {{"reveal_in_finder", "Reveal in Finder"}}
-        });
+#if defined(__APPLE__)
+        AssetAction action{"reveal_in_finder", "Reveal in Finder", AssetAction::Type::Execute};
+#elif defined(_WIN32)
+        AssetAction action{"show_in_explorer", "Show in Explorer", AssetAction::Type::Execute};
+#else
+        AssetAction action{"open_folder", "Open Folder", AssetAction::Type::Execute};
+#endif
+        return CapabilityFuture(AssetOpenActionsContract::Result{{action}});
     }
 
 private:
@@ -244,27 +254,34 @@ public:
 protected:
     CapabilityFuture<AssetExecuteActionContract::Result>
     invokeTyped(const AssetExecuteActionContract::Request& req, CapabilityContext&) override {
-        if (req.actionId != "reveal_in_finder") {
+        static constexpr std::array kRevealIds = {
+            "reveal_in_finder", "show_in_explorer", "open_folder"
+        };
+        bool isReveal = std::find(kRevealIds.begin(), kRevealIds.end(), req.actionId)
+                        != kRevealIds.end();
+        if (!isReveal) {
             return CapabilityFuture(AssetExecuteActionContract::Result{
                 false, "unknown action: " + req.actionId});
         }
 
         std::string path = readFilePath(meta_, pluginId_, req.assetRef.assetId);
         if (path.empty()) {
-            return CapabilityFuture(AssetExecuteActionContract::Result{false, "asset path not found"});
+            return CapabilityFuture(AssetExecuteActionContract::Result{
+                false, "asset path not found"});
         }
 
-        // Platform-specific reveal. Both platforms open the parent directory.
-        std::filesystem::path parent = std::filesystem::path(path).parent_path();
-        std::string cmd;
-#if defined(_WIN32)
-        cmd = "explorer \"" + parent.string() + "\"";
-#elif defined(__APPLE__)
-        cmd = "open \"" + parent.string() + "\"";
+#if defined(__APPLE__)
+        // -R selects the file itself in Finder rather than just opening the folder.
+        QProcess::startDetached("open", {"-R", QString::fromStdString(path)});
+#elif defined(_WIN32)
+        // explorer /select highlights the file in Explorer.
+        QProcess::startDetached("explorer",
+            {"/select,", QDir::toNativeSeparators(QString::fromStdString(path))});
 #else
-        cmd = "xdg-open \"" + parent.string() + "\"";
+        QDesktopServices::openUrl(
+            QUrl::fromLocalFile(QString::fromStdString(
+                std::filesystem::path(path).parent_path().string())));
 #endif
-        std::system(cmd.c_str()); // NOLINT: fire-and-forget reveal action
         return CapabilityFuture(AssetExecuteActionContract::Result{true, {}});
     }
 

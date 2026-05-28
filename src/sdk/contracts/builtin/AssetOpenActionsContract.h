@@ -1,14 +1,20 @@
 #pragma once
 #include "sdk/contracts/builtin/AssetRef.h"
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+class QWidget;
+
 namespace clickin {
 
 struct AssetAction {
+    enum class Type { Execute, OpenWindow };
+
     std::string id;
     std::string label;
+    Type        type = Type::Execute;
 };
 
 struct AssetOpenActionsContract {
@@ -32,8 +38,10 @@ struct AssetExecuteActionContract {
     };
 
     struct Result {
-        bool        success = false;
+        bool        success      = false;
         std::string errorMessage;
+        // Non-null iff the action type was OpenWindow.
+        std::function<QWidget*(QWidget* parent)> windowFactory;
     };
 };
 

@@ -57,16 +57,28 @@ void AssetService::deleteAsset(const AssetId& id) {
     stmt->step();
 }
 
+AssetId AssetService::findAssetByUri(const std::string& uri) const {
+    auto stmt = db_.prepare(
+        "SELECT asset_id FROM asset_provider WHERE uri = ? LIMIT 1;"
+    );
+    if (!stmt) return {};
+    stmt->bindText(1, uri);
+    if (!stmt->step()) return {};
+    return stmt->columnText(0);
+}
+
 std::string AssetService::createAssetProvider(const std::string& assetId,
                                                const std::string& providerId,
                                                const std::string& uri) {
     std::string id = Database::generateId();
     auto stmt = db_.prepare(
-        "INSERT INTO asset_provider (id, asset_id, provider_id, uri) VALUES (?, ?, ?, ?);"
+        "INSERT OR IGNORE INTO asset_provider (id, asset_id, provider_id, uri)"
+        " VALUES (?, ?, ?, ?);"
     );
     if (!stmt) return {};
     stmt->bindText(1, id).bindText(2, assetId).bindText(3, providerId).bindText(4, uri);
     stmt->step();
+    if (db_.changes() == 0) return {};  // URI already exists — insert was silently ignored
     return id;
 }
 

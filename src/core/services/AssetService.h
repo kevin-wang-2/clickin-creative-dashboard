@@ -32,6 +32,10 @@ public:
     AssetId                  createAsset(const std::string& name);
     void                     deleteAsset(const AssetId& id);
 
+    // Returns the asset ID that owns the given URI, or empty string if none.
+    // Stable across the multi-binding refactor (#6) — only the backing table changes.
+    AssetId findAssetByUri(const std::string& uri) const;
+
     // asset_provider table
     std::string                      createAssetProvider(const std::string& assetId,
                                                           const std::string& providerId,

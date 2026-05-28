@@ -99,10 +99,12 @@ protected:
             std::string name = entry.path().stem().string();
             std::string path = entry.path().string();
             int64_t size = static_cast<int64_t>(std::filesystem::file_size(entry.path(), ec));
+            std::string uri = "file://" + path;
 
-            // Create asset + provider records, then store private path metadata.
+            // Skip if this URI is already tracked by any provider.
+            if (!assets_.findAssetByUri(uri).empty()) continue;
+
             std::string assetId = assets_.createAsset(name);
-            std::string uri     = "file://" + path;
             assets_.createAssetProvider(assetId, pluginId_, uri);
             storeFilePath(meta_, pluginId_, assetId, path);
 

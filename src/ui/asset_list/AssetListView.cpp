@@ -4,6 +4,7 @@
 #include "core/services/AssetService.h"
 #include "core/services/HierarchyService.h"
 #include "core/capability/CapabilityBroker.h"
+#include "core/capability/CapabilityFutureQt.h"
 #include "sdk/contracts/builtin/AssetDiscoveryContract.h"
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
 #include "sdk/contracts/builtin/AssetRef.h"
@@ -263,8 +264,12 @@ void AssetListView::onScanFolder() {
     clickin::AssetDiscoveryContract::Request req;
     req.sourceType = "local.folder";
     req.uri        = dir.toStdString();
-    ctx.capabilities.invoke<clickin::AssetDiscoveryContract>(ref, req).get();
-    refresh();
+
+    // DiscoveryHandler is Async — never block the UI thread waiting for it.
+    clickin::thenOnUi(
+        ctx.capabilities.invoke<clickin::AssetDiscoveryContract>(ref, req),
+        this,
+        [this](const clickin::AssetDiscoveryContract::Result&) { refresh(); });
 }
 
 bool AssetListView::eventFilter(QObject* obj, QEvent* ev) {

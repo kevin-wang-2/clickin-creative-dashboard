@@ -615,12 +615,13 @@ private:
         });
 
         QObject::connect(scanBtn, &QPushButton::clicked, widget,
-            [pid, broker, pathEdit, status]() {
+            [pid, broker, pathEdit, status, scanBtn]() {
                 QString qpath = pathEdit->text().trimmed();
                 if (qpath.isEmpty()) { status->setText("Enter a folder path first."); return; }
                 if (!broker)         { status->setText("No broker available."); return; }
 
                 status->setText("Scanning\xe2\x80\xa6");
+                scanBtn->setEnabled(false);
 
                 // Route through the capability bus so DiscoveryHandler runs in full
                 // (hierarchy metadata + traverse are handled there).
@@ -628,15 +629,27 @@ private:
                 for (auto& r : broker->findAll<AssetDiscoveryContract>())
                     if (std::string(r.providerId) == pid) { ref = r; break; }
 
-                if (!ref.valid()) { status->setText("Discovery handler not registered."); return; }
+                if (!ref.valid()) {
+                    status->setText("Discovery handler not registered.");
+                    scanBtn->setEnabled(true);
+                    return;
+                }
 
                 AssetDiscoveryContract::Request req;
                 req.sourceType = "local.folder";
                 req.uri        = qpath.toStdString();
 
-                auto result = broker->invoke<AssetDiscoveryContract>(ref, req).get();
-                status->setText(
-                    QString("Done. Found %1 new asset(s).").arg(result.assets.size()));
+                // DiscoveryHandler is Async — runs on WorkerPool; use onReady() so the
+                // UI thread is never blocked. Jump back to the UI thread via invokeMethod.
+                broker->invoke<AssetDiscoveryContract>(ref, req)
+                    .onReady([status, scanBtn](const AssetDiscoveryContract::Result& result) {
+                        QMetaObject::invokeMethod(status, [status, scanBtn,
+                                                          count = result.assets.size()]() {
+                            status->setText(
+                                QString("Done. Found %1 new asset(s).").arg(count));
+                            scanBtn->setEnabled(true);
+                        });
+                    });
             });
 
         return widget;

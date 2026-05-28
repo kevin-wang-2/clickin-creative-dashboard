@@ -44,6 +44,30 @@ struct ThrowingPlugin : public IPlugin {
     }
 };
 
+// Plugin that declares a dependency on another plugin ID.
+struct DependentPlugin : public IPlugin {
+    bool initialized = false;
+    std::string id_;
+    std::vector<std::string> deps_;
+
+    DependentPlugin(std::string id, std::vector<std::string> deps)
+        : id_(std::move(id)), deps_(std::move(deps)) {}
+
+    PluginManifest manifest() const override {
+        PluginManifest m;
+        m.pluginId    = id_;
+        m.name        = id_;
+        m.version     = "1.0";
+        m.dependencies = deps_;
+        return m;
+    }
+    void initialize(PluginContext&) override { initialized = true; }
+    void shutdown() override {}
+    std::vector<std::unique_ptr<IRawCapabilityHandler>> createCapabilityHandlers() override {
+        return {};
+    }
+};
+
 // ── Fixture ───────────────────────────────────────────────────────────────────
 
 class PluginLifecycleTest : public ::testing::Test {
@@ -188,4 +212,91 @@ TEST_F(PluginLifecycleTest, DisabledPluginSkipped) {
     EXPECT_FALSE(good->initialized);
     auto states = pm.states();
     EXPECT_EQ(states[0].loadStatus, "disabled");
+}
+
+// ── Dependency resolution ─────────────────────────────────────────────────────
+
+TEST_F(PluginLifecycleTest, DependencyLoadedBeforeDependent) {
+    // dep is added AFTER dependent in registration order — sort must reorder.
+    PluginManager pm(*capReg_);
+    auto* dependent = new DependentPlugin("test.dependent", {"test.dep"});
+    auto* dep       = new DependentPlugin("test.dep", {});
+    pm.addPlugin(std::unique_ptr<IPlugin>(dependent));
+    pm.addPlugin(std::unique_ptr<IPlugin>(dep));
+
+    auto c = ctx();
+    pm.activateAll(c);
+
+    auto states = pm.states();
+    EXPECT_EQ(states.size(), 2u);
+    EXPECT_TRUE(dep->initialized);
+    EXPECT_TRUE(dependent->initialized);
+    for (const auto& s : states)
+        EXPECT_EQ(s.loadStatus, "active");
+}
+
+TEST_F(PluginLifecycleTest, DependencyFailureCascades) {
+    // ThrowingPlugin fails → DependentPlugin should be marked failed too.
+    PluginManager pm(*capReg_);
+    pm.addPlugin(std::make_unique<ThrowingPlugin>());
+    auto* dependent = new DependentPlugin("test.dependent", {"test.throwing"});
+    pm.addPlugin(std::unique_ptr<IPlugin>(dependent));
+
+    auto c = ctx();
+    pm.activateAll(c);
+
+    EXPECT_FALSE(dependent->initialized);
+    auto states = pm.states();
+    auto it = std::find_if(states.begin(), states.end(),
+        [](const auto& s){ return s.pluginId == "test.dependent"; });
+    ASSERT_NE(it, states.end());
+    EXPECT_EQ(it->loadStatus, "failed");
+    EXPECT_FALSE(it->failReason.empty());
+}
+
+TEST_F(PluginLifecycleTest, MissingDependencyFails) {
+    PluginManager pm(*capReg_);
+    auto* p = new DependentPlugin("test.lonely", {"test.nonexistent"});
+    pm.addPlugin(std::unique_ptr<IPlugin>(p));
+
+    auto c = ctx();
+    pm.activateAll(c);
+
+    EXPECT_FALSE(p->initialized);
+    auto states = pm.states();
+    ASSERT_EQ(states.size(), 1u);
+    EXPECT_EQ(states[0].loadStatus, "failed");
+    EXPECT_NE(states[0].failReason.find("not found"), std::string::npos);
+}
+
+TEST_F(PluginLifecycleTest, CircularDependencyDetected) {
+    // A depends on B, B depends on A.
+    PluginManager pm(*capReg_);
+    pm.addPlugin(std::make_unique<DependentPlugin>("test.a", std::vector<std::string>{"test.b"}));
+    pm.addPlugin(std::make_unique<DependentPlugin>("test.b", std::vector<std::string>{"test.a"}));
+
+    auto c = ctx();
+    pm.activateAll(c);  // must not hang or throw
+
+    for (const auto& s : pm.states()) {
+        EXPECT_EQ(s.loadStatus, "failed");
+        EXPECT_NE(s.failReason.find("circular"), std::string::npos);
+    }
+}
+
+TEST_F(PluginLifecycleTest, DependenciesExposedInState) {
+    PluginManager pm(*capReg_);
+    pm.addPlugin(std::make_unique<DependentPlugin>("test.dep", std::vector<std::string>{}));
+    pm.addPlugin(std::make_unique<DependentPlugin>("test.consumer",
+                                                    std::vector<std::string>{"test.dep"}));
+
+    auto c = ctx();
+    pm.activateAll(c);
+
+    auto states = pm.states();
+    auto it = std::find_if(states.begin(), states.end(),
+        [](const auto& s){ return s.pluginId == "test.consumer"; });
+    ASSERT_NE(it, states.end());
+    ASSERT_EQ(it->dependencies.size(), 1u);
+    EXPECT_EQ(it->dependencies[0], "test.dep");
 }

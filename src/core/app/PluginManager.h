@@ -31,13 +31,14 @@ public:
     void shutdownAll();
 
     struct PluginState {
-        std::string pluginId;
-        std::string name;
-        std::string version;
-        bool        critical   = false;
-        bool        builtin    = true;
-        std::string loadStatus;   // active | failed | disabled
-        std::string failReason;
+        std::string              pluginId;
+        std::string              name;
+        std::string              version;
+        bool                     critical      = false;
+        bool                     builtin       = true;
+        std::string              loadStatus;   // active | failed | disabled
+        std::string              failReason;
+        std::vector<std::string> dependencies; // from manifest
     };
     std::vector<PluginState> states() const;
 

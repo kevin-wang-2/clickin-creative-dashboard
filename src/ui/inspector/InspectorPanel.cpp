@@ -5,7 +5,7 @@
 #include "sdk/contracts/builtin/AssetRef.h"
 #include "sdk/contracts/builtin/AssetNameContract.h"
 #include "sdk/contracts/builtin/AssetKindContract.h"
-#include "sdk/contracts/media/AudioMetadataContract.h"
+#include "providers/audio/contracts/AudioMetadataContract.h"
 
 #include <QFormLayout>
 #include <QGroupBox>

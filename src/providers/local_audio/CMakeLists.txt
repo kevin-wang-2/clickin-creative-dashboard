@@ -6,6 +6,7 @@ add_library(provider_local_audio STATIC
 set_target_properties(provider_local_audio PROPERTIES AUTOMOC ON)
 target_link_libraries(provider_local_audio PUBLIC
     clickin_core
+    audio_domain
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets

@@ -1,3 +1,4 @@
+add_subdirectory(audio)
 add_subdirectory(core_asset)
 add_subdirectory(local_file)
 add_subdirectory(local_audio)

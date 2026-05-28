@@ -54,6 +54,14 @@ int main(int argc, char* argv[]) {
     MainWindow window(app);
     window.show();
 
+    for (const auto& pluginId : app.autoStartWindowPluginIds()) {
+        QWidget* win = app.createPluginWindowFor(pluginId, nullptr);
+        if (win) {
+            win->setAttribute(Qt::WA_DeleteOnClose);
+            win->show();
+        }
+    }
+
     int result = qtApp.exec();
     app.shutdown();
     return result;

@@ -15,6 +15,9 @@ public:
     void shutdown() override;
     std::vector<std::unique_ptr<IRawCapabilityHandler>> createCapabilityHandlers() override;
 
+    bool     hasPluginWindow() const override { return true; }
+    QWidget* createPluginWindow(QWidget* parent) override;
+
 private:
     std::string      pluginId_;
     AssetService*    assets_   = nullptr;

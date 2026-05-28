@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+class QWidget;
+
 namespace clickin {
 
 struct PluginContext;
@@ -13,8 +15,9 @@ struct PluginManifest {
     std::string              pluginId;
     std::string              name;
     std::string              version;
-    bool                     builtin      = true;
-    bool                     critical     = false;
+    bool                     builtin         = true;
+    bool                     critical        = false;
+    bool                     autoStartWindow = false;
     // Plugin IDs that must be loaded and active before this plugin initializes.
     std::vector<std::string> dependencies;
 };
@@ -27,6 +30,9 @@ public:
     virtual void initialize(PluginContext& context) = 0;
     virtual void shutdown() = 0;
     virtual std::vector<std::unique_ptr<IRawCapabilityHandler>> createCapabilityHandlers() = 0;
+
+    virtual bool hasPluginWindow() const { return false; }
+    virtual QWidget* createPluginWindow(QWidget* parent) { (void)parent; return nullptr; }
 };
 
 } // namespace clickin

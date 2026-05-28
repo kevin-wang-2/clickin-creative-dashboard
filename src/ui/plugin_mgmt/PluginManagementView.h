@@ -10,6 +10,9 @@ public:
     explicit PluginManagementView(clickin::Application& app, QWidget* parent = nullptr);
     ~PluginManagementView();
 
+private slots:
+    void onItemDoubleClicked(int row, int column);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

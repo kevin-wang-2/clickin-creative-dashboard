@@ -135,6 +135,23 @@ void PluginManager::shutdownAll() {
     }
 }
 
+QWidget* PluginManager::createPluginWindow(const std::string& pluginId, QWidget* parent) const {
+    for (const auto& e : entries_) {
+        if (e.plugin->manifest().pluginId == pluginId && e.active)
+            return e.plugin->createPluginWindow(parent);
+    }
+    return nullptr;
+}
+
+std::vector<std::string> PluginManager::autoStartWindowPluginIds() const {
+    std::vector<std::string> ids;
+    for (const auto& e : entries_) {
+        if (e.active && e.plugin->manifest().autoStartWindow)
+            ids.push_back(e.plugin->manifest().pluginId);
+    }
+    return ids;
+}
+
 std::vector<PluginManager::PluginState> PluginManager::states() const {
     std::vector<PluginState> result;
     result.reserve(entries_.size());
@@ -142,6 +159,7 @@ std::vector<PluginManager::PluginState> PluginManager::states() const {
         const auto& m = e.plugin->manifest();
         result.push_back({m.pluginId, m.name, m.version,
                           m.critical, m.builtin,
+                          m.autoStartWindow, e.plugin->hasPluginWindow(),
                           e.loadStatus, e.failReason,
                           m.dependencies});
     }

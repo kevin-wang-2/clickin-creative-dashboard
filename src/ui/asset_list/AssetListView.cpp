@@ -2,6 +2,7 @@
 #include "core/app/Application.h"
 #include "core/app/CoreContext.h"
 #include "core/services/AssetService.h"
+#include "core/services/HierarchyService.h"
 #include "core/capability/CapabilityBroker.h"
 #include "sdk/contracts/builtin/AssetDiscoveryContract.h"
 #include "sdk/contracts/builtin/AssetKindContract.h"
@@ -15,11 +16,14 @@
 #include <QEvent>
 #include <QFileDialog>
 #include <QHeaderView>
+#include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QTableView>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -74,12 +78,20 @@ private:
 
 // ── Impl ──────────────────────────────────────────────────────────────────────
 
+struct NavEntry {
+    QString assetId;
+    QString name;
+};
+
 struct AssetListView::Impl {
     clickin::Application& app;
     AssetTableModel* model         = nullptr;
     QTableView*      table         = nullptr;
     QLineEdit*       searchBar     = nullptr;
     QTimer*          debounceTimer = nullptr;
+    QWidget*         breadcrumb    = nullptr;   // container rebuilt on each navigation
+
+    std::vector<NavEntry> navStack;  // empty = flat root view
 
     explicit Impl(clickin::Application& a) : app(a) {}
 };
@@ -93,6 +105,13 @@ AssetListView::AssetListView(clickin::Application& app, QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(4);
+
+    // Breadcrumb placeholder — rebuilt in rebuildBreadcrumb()
+    impl_->breadcrumb = new QWidget(this);
+    impl_->breadcrumb->setLayout(new QHBoxLayout());
+    impl_->breadcrumb->layout()->setContentsMargins(0, 0, 0, 0);
+    impl_->breadcrumb->hide();
+    layout->addWidget(impl_->breadcrumb);
 
     impl_->searchBar = new QLineEdit(this);
     impl_->searchBar->setPlaceholderText("Search assets…");
@@ -139,25 +158,105 @@ AssetListView::AssetListView(clickin::Application& app, QWidget* parent)
 AssetListView::~AssetListView() = default;
 
 void AssetListView::refresh() {
-    auto ctx    = impl_->app.coreContext();
-    auto assets = ctx.assets.listAssets();
+    // Stay at current nav level; reload from DB.
+    loadCurrentLevel();
+}
 
-    // Backfill kind for assets that predate the kind column.
-    // Once stored it won't be re-queried on subsequent refreshes.
-    auto kindRef = ctx.capabilities.findBest<clickin::AssetKindContract>(clickin::CapabilityQuery{});
-    if (kindRef.valid()) {
-        for (auto& a : assets) {
-            if (!a.kind.empty()) continue;
-            auto result = ctx.capabilities
-                .invoke<clickin::AssetKindContract>(kindRef, clickin::AssetRef{a.id}).get();
-            if (!result.kind.empty() && result.confidence > 0) {
-                ctx.assets.setAssetKind(a.id, result.kind);
-                a.kind = result.kind;
+void AssetListView::loadCurrentLevel() {
+    auto ctx = impl_->app.coreContext();
+
+    std::vector<clickin::AssetRecord> assets;
+
+    if (impl_->navStack.empty()) {
+        // Root: prefer hierarchy nodes, fall back to flat list.
+        auto nodes = ctx.hierarchy.getAllNodes();
+        if (!nodes.empty()) {
+            assets = std::move(nodes);
+        } else {
+            assets = ctx.assets.listAssets();
+            // Backfill kind for assets that predate the kind column.
+            auto kindRef = ctx.capabilities.findBest<clickin::AssetKindContract>(
+                clickin::CapabilityQuery{});
+            if (kindRef.valid()) {
+                for (auto& a : assets) {
+                    if (!a.kind.empty()) continue;
+                    auto result = ctx.capabilities
+                        .invoke<clickin::AssetKindContract>(kindRef, clickin::AssetRef{a.id})
+                        .get();
+                    if (!result.kind.empty() && result.confidence > 0) {
+                        ctx.assets.setAssetKind(a.id, result.kind);
+                        a.kind = result.kind;
+                    }
+                }
             }
         }
+    } else {
+        const QString& parentId = impl_->navStack.back().assetId;
+        assets = ctx.hierarchy.getAllChildren(parentId.toStdString());
     }
 
     impl_->model->setAssets(std::move(assets));
+}
+
+void AssetListView::navigateInto(const QString& assetId, const QString& name) {
+    if (static_cast<int>(impl_->navStack.size()) >= kMaxNavDepth) return;
+    impl_->navStack.push_back({assetId, name});
+    rebuildBreadcrumb();
+    impl_->searchBar->clear();
+    loadCurrentLevel();
+}
+
+void AssetListView::navigateTo(int depth) {
+    if (depth < 0) depth = 0;
+    impl_->navStack.resize(static_cast<std::size_t>(depth));
+    rebuildBreadcrumb();
+    impl_->searchBar->clear();
+    loadCurrentLevel();
+}
+
+void AssetListView::rebuildBreadcrumb() {
+    // Remove old buttons.
+    auto* bcLayout = qobject_cast<QHBoxLayout*>(impl_->breadcrumb->layout());
+    while (bcLayout->count() > 0) {
+        auto* item = bcLayout->takeAt(0);
+        if (item->widget()) item->widget()->deleteLater();
+        delete item;
+    }
+
+    if (impl_->navStack.empty()) {
+        impl_->breadcrumb->hide();
+        return;
+    }
+
+    // Root button
+    auto* rootBtn = new QPushButton("⌂ All", impl_->breadcrumb);
+    rootBtn->setFlat(true);
+    connect(rootBtn, &QPushButton::clicked, this, [this]() { navigateTo(0); });
+    bcLayout->addWidget(rootBtn);
+
+    for (int i = 0; i < static_cast<int>(impl_->navStack.size()); ++i) {
+        auto* sep = new QLabel(" › ", impl_->breadcrumb);
+        bcLayout->addWidget(sep);
+
+        const int depth = i + 1;
+        const QString name = impl_->navStack[i].name;
+        auto* btn = new QPushButton(name, impl_->breadcrumb);
+        btn->setFlat(true);
+        // Only the last entry is non-clickable (current location)
+        if (depth == static_cast<int>(impl_->navStack.size())) {
+            btn->setEnabled(false);
+        } else {
+            connect(btn, &QPushButton::clicked, this, [this, depth]() { navigateTo(depth); });
+        }
+        bcLayout->addWidget(btn);
+    }
+
+    bcLayout->addStretch();
+    impl_->breadcrumb->show();
+}
+
+void AssetListView::onBreadcrumbClicked(int depth) {
+    navigateTo(depth);
 }
 
 void AssetListView::onScanFolder() {
@@ -195,7 +294,17 @@ bool AssetListView::eventFilter(QObject* obj, QEvent* ev) {
 
 void AssetListView::onDoubleClicked(const QModelIndex& index) {
     if (!index.isValid()) return;
-    emit previewRequested(impl_->model->assetIdAt(index.row()));
+    QString assetId = impl_->model->assetIdAt(index.row());
+    // Check if this asset is a folder-like node (has children in hierarchy).
+    auto ctx = impl_->app.coreContext();
+    if (ctx.hierarchy.anyHasChildren(assetId.toStdString())) {
+        // Get name from the model for the breadcrumb label.
+        QModelIndex nameIdx = impl_->model->index(index.row(), 0);
+        QString name = impl_->model->data(nameIdx, Qt::DisplayRole).toString();
+        navigateInto(assetId, name);
+    } else {
+        emit previewRequested(assetId);
+    }
 }
 
 void AssetListView::onContextMenuRequested(const QPoint& pos) {
@@ -277,14 +386,15 @@ void AssetListView::onSearchTextChanged(const QString&) {
 void AssetListView::onSearchDebounced() {
     QString query = impl_->searchBar->text().trimmed();
     if (query.isEmpty()) {
-        refresh();
+        loadCurrentLevel();
         return;
     }
 
-    auto ctx    = impl_->app.coreContext();
-    auto ref    = ctx.capabilities.findBest<clickin::AssetSearchContract>(clickin::CapabilityQuery{});
+    // Search always operates on the full flat catalogue; collapse nav stack visually.
+    auto ctx = impl_->app.coreContext();
+    auto ref = ctx.capabilities.findBest<clickin::AssetSearchContract>(clickin::CapabilityQuery{});
     if (!ref.valid()) {
-        refresh();
+        loadCurrentLevel();
         return;
     }
 

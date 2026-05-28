@@ -27,8 +27,16 @@ private slots:
     void onDoubleClicked(const QModelIndex& index);
     void onSearchTextChanged(const QString& text);
     void onSearchDebounced();
+    void onBreadcrumbClicked(int depth);  // navigate back to given depth (0 = root)
 
 private:
+    void navigateInto(const QString& assetId, const QString& name);
+    void navigateTo(int depth);           // pop nav stack to given depth
+    void loadCurrentLevel();
+    void rebuildBreadcrumb();
+
+    static constexpr int kMaxNavDepth = 50;
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

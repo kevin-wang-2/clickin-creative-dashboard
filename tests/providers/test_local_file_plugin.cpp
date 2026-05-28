@@ -9,6 +9,7 @@
 #include "core/services/CacheService.h"
 #include "core/services/JobService.h"
 #include "core/services/SettingsService.h"
+#include "core/services/HierarchyService.h"
 #include "sdk/contracts/builtin/AssetDiscoveryContract.h"
 #include "sdk/contracts/builtin/AssetLocatorContract.h"
 #include "sdk/contracts/builtin/AssetNameContract.h"
@@ -31,13 +32,14 @@ protected:
         ASSERT_TRUE(dbSvc_->initialize());
 
         auto& db = dbSvc_->db();
-        assets_   = std::make_unique<AssetService>(db);
-        metadata_ = std::make_unique<MetadataService>(db);
-        cache_    = std::make_unique<CacheService>(db);
-        jobs_     = std::make_unique<JobService>();
-        settings_ = std::make_unique<SettingsService>(db);
-        capReg_   = std::make_unique<CapabilityRegistry>();
-        broker_   = std::make_unique<CapabilityBroker>(*capReg_);
+        assets_    = std::make_unique<AssetService>(db);
+        metadata_  = std::make_unique<MetadataService>(db);
+        cache_     = std::make_unique<CacheService>(db);
+        jobs_      = std::make_unique<JobService>();
+        settings_  = std::make_unique<SettingsService>(db);
+        hierarchy_ = std::make_unique<HierarchyService>(db);
+        capReg_    = std::make_unique<CapabilityRegistry>();
+        broker_    = std::make_unique<CapabilityBroker>(*capReg_);
 
         // Temp folder with test audio files
         folder_ = std::filesystem::temp_directory_path()
@@ -60,14 +62,21 @@ protected:
 
     void TearDown() override {
         broker_.reset(); capReg_.reset();
-        settings_.reset(); jobs_.reset(); cache_.reset();
+        settings_.reset(); hierarchy_.reset(); jobs_.reset(); cache_.reset();
         metadata_.reset(); assets_.reset(); dbSvc_.reset();
         std::filesystem::remove_all(folder_);
         std::filesystem::remove(dbPath_);
     }
 
     CoreContext ctx() {
-        return {*dbSvc_, *assets_, *metadata_, *cache_, *jobs_, *settings_, *broker_};
+        return {*dbSvc_, *assets_, *metadata_, *cache_, *jobs_, *settings_, *hierarchy_, *broker_};
+    }
+
+    // Returns first audio asset (kind starts with "audio.") from the DB.
+    std::string firstAudioAssetId() {
+        for (const auto& a : assets_->listAssets())
+            if (a.kind.starts_with("audio.")) return a.id;
+        return {};
     }
 
     static void createFile(const std::filesystem::path& p) {
@@ -83,6 +92,7 @@ protected:
     std::unique_ptr<CacheService>     cache_;
     std::unique_ptr<JobService>       jobs_;
     std::unique_ptr<SettingsService>  settings_;
+    std::unique_ptr<HierarchyService> hierarchy_;
     std::unique_ptr<CapabilityRegistry> capReg_;
     std::unique_ptr<CapabilityBroker>   broker_;
     std::unique_ptr<CoreContext>        coreCtx_;
@@ -92,18 +102,18 @@ protected:
 // ── Discovery ─────────────────────────────────────────────────────────────────
 
 TEST_F(LocalFilePluginTest, DiscoveryCreatesAssetRecords) {
-    auto c = ctx();
     auto ref = broker_->findBest<AssetDiscoveryContract>(CapabilityQuery{});
     ASSERT_TRUE(ref.valid());
 
     auto result = broker_->invoke<AssetDiscoveryContract>(
         ref, AssetDiscoveryContract::Request{"local.folder", folder_.string()}).get();
 
-    // 4 audio files (kick.wav, snare.aiff, bass.flac, sub/hi-hat.wav); notes.txt ignored
+    // result.assets only reports newly created audio files (notes.txt ignored)
     EXPECT_EQ(result.assets.size(), 4u);
 
     auto dbAssets = assets_->listAssets();
-    EXPECT_EQ(dbAssets.size(), 4u);
+    // 4 audio + root folder + sub folder = 6 total
+    EXPECT_EQ(dbAssets.size(), 6u);
 }
 
 TEST_F(LocalFilePluginTest, DiscoveryIgnoresNonAudioFiles) {
@@ -137,15 +147,12 @@ TEST_F(LocalFilePluginTest, DiscoveryUnsupportedSourceTypeReturnsEmpty) {
 // ── Locator ───────────────────────────────────────────────────────────────────
 
 TEST_F(LocalFilePluginTest, LocatorReturnsFileUri) {
-    // First run discovery to populate metadata.
     auto discRef = broker_->findBest<AssetDiscoveryContract>(CapabilityQuery{});
     broker_->invoke<AssetDiscoveryContract>(
         discRef, AssetDiscoveryContract::Request{"local.folder", folder_.string()}).get();
 
-    // Pick any asset.
-    auto dbAssets = assets_->listAssets();
-    ASSERT_FALSE(dbAssets.empty());
-    std::string assetId = dbAssets[0].id;
+    std::string assetId = firstAudioAssetId();
+    ASSERT_FALSE(assetId.empty());
 
     auto locRef = broker_->findBest<AssetLocatorContract>(CapabilityQuery{});
     ASSERT_TRUE(locRef.valid());
@@ -165,9 +172,8 @@ TEST_F(LocalFilePluginTest, NameHandlerReturnsStem) {
     broker_->invoke<AssetDiscoveryContract>(
         discRef, AssetDiscoveryContract::Request{"local.folder", folder_.string()}).get();
 
-    auto dbAssets = assets_->listAssets();
-    ASSERT_FALSE(dbAssets.empty());
-    std::string assetId = dbAssets[0].id;
+    std::string assetId = firstAudioAssetId();
+    ASSERT_FALSE(assetId.empty());
 
     auto nameRef = broker_->findBest<AssetNameContract>(CapabilityQuery{});
     ASSERT_TRUE(nameRef.valid());
@@ -185,9 +191,8 @@ TEST_F(LocalFilePluginTest, KindHandlerReturnsAudioKind) {
     broker_->invoke<AssetDiscoveryContract>(
         discRef, AssetDiscoveryContract::Request{"local.folder", folder_.string()}).get();
 
-    auto dbAssets = assets_->listAssets();
-    ASSERT_FALSE(dbAssets.empty());
-    std::string assetId = dbAssets[0].id;
+    std::string assetId = firstAudioAssetId();
+    ASSERT_FALSE(assetId.empty());
 
     auto kindRef = broker_->findBest<AssetKindContract>(CapabilityQuery{});
     ASSERT_TRUE(kindRef.valid());

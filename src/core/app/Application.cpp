@@ -1,6 +1,7 @@
 #include "core/app/Application.h"
 #include "core/app/CoreContext.h"
 #include "core/app/PluginManager.h"
+#include "core/services/HierarchyService.h"
 
 #include <memory>
 #include <string>
@@ -18,6 +19,7 @@ struct Application::Impl {
     std::unique_ptr<CacheService>       cache;
     std::unique_ptr<JobService>         jobs;
     std::unique_ptr<SettingsService>    settings;
+    std::unique_ptr<HierarchyService>   hierarchy;
     std::unique_ptr<CapabilityRegistry> capRegistry;
     std::unique_ptr<CapabilityBroker>   broker;
     std::unique_ptr<PluginManager>      plugins;
@@ -37,11 +39,12 @@ bool Application::initialize(const std::string& dbPath) {
 
     // 2. Construct core services backed by the DB.
     Database& db = impl_->dbService->db();
-    impl_->assets   = std::make_unique<AssetService>(db);
-    impl_->metadata = std::make_unique<MetadataService>(db);
-    impl_->cache    = std::make_unique<CacheService>(db);
-    impl_->jobs     = std::make_unique<JobService>();
-    impl_->settings = std::make_unique<SettingsService>(db);
+    impl_->assets     = std::make_unique<AssetService>(db);
+    impl_->metadata   = std::make_unique<MetadataService>(db);
+    impl_->cache      = std::make_unique<CacheService>(db);
+    impl_->jobs       = std::make_unique<JobService>();
+    impl_->settings   = std::make_unique<SettingsService>(db);
+    impl_->hierarchy  = std::make_unique<HierarchyService>(db);
 
     // 3. Capability infrastructure.
     impl_->capRegistry = std::make_unique<CapabilityRegistry>();
@@ -66,6 +69,7 @@ void Application::shutdown() {
     impl_->broker.reset();
     impl_->capRegistry.reset();
     impl_->settings.reset();
+    impl_->hierarchy.reset();
     impl_->jobs.reset();
     impl_->cache.reset();
     impl_->metadata.reset();
@@ -96,6 +100,7 @@ CoreContext Application::coreContext() {
         *impl_->cache,
         *impl_->jobs,
         *impl_->settings,
+        *impl_->hierarchy,
         *impl_->broker
     };
 }

@@ -7,6 +7,7 @@ namespace clickin {
 
 class AssetService;
 class MetadataService;
+class HierarchyService;
 
 class LocalFilePlugin : public IPlugin {
 public:
@@ -19,9 +20,10 @@ public:
     QWidget* createPluginWindow(QWidget* parent) override;
 
 private:
-    std::string      pluginId_;
-    AssetService*    assets_   = nullptr;
-    MetadataService* metadata_ = nullptr;
+    std::string        pluginId_;
+    AssetService*      assets_    = nullptr;
+    MetadataService*   metadata_  = nullptr;
+    HierarchyService*  hierarchy_ = nullptr;
 };
 
 } // namespace clickin

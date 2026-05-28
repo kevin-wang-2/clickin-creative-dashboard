@@ -8,6 +8,7 @@
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
 #include "sdk/contracts/builtin/AssetRef.h"
 #include "sdk/contracts/builtin/AssetSearchContract.h"
+#include <QPointer>
 
 #include <QAbstractTableModel>
 #include <QDir>
@@ -235,10 +236,38 @@ void AssetListView::onContextMenuRequested(const QPoint& pos) {
 
     if (chosen == previewAct) {
         emit previewRequested(assetId);
-    } else if (chosen == detailsAct) {
-        emit showDetailsRequested(assetId);
+        return;
     }
-    // (future: invoke AssetExecuteActionContract for other actions)
+    if (chosen == detailsAct) {
+        emit showDetailsRequested(assetId);
+        return;
+    }
+
+    // Plugin-contributed action — look up type and invoke.
+    QString chosenId = chosen->data().toString();
+    clickin::AssetAction::Type actionType = clickin::AssetAction::Type::Execute;
+    for (const auto& a : openActions)
+        if (QString::fromStdString(a.id) == chosenId) { actionType = a.type; break; }
+
+    auto execRef = ctx.capabilities.findBest<clickin::AssetExecuteActionContract>(
+        clickin::CapabilityQuery{});
+    if (!execRef.valid()) return;
+
+    clickin::AssetExecuteActionContract::Request execReq{ref, chosenId.toStdString()};
+    auto result = ctx.capabilities
+        .invoke<clickin::AssetExecuteActionContract>(execRef, execReq).get();
+
+    if (actionType == clickin::AssetAction::Type::OpenWindow && result.windowFactory) {
+        QWidget* win = result.windowFactory(nullptr);
+        if (win) {
+            win->setAttribute(Qt::WA_DeleteOnClose);
+            win->setWindowFlag(Qt::Window);
+            win->show();
+        }
+    } else if (!result.success && !result.errorMessage.empty()) {
+        QMessageBox::warning(this, "Action failed",
+                             QString::fromStdString(result.errorMessage));
+    }
 }
 
 void AssetListView::onSearchTextChanged(const QString&) {

@@ -293,6 +293,184 @@ The `pluginNodeId` you choose should therefore be stable for the lifetime of a l
 
 ---
 
+## Threading model and execution policy
+
+### Handler execution policies
+
+Every `IRawCapabilityHandler` declares an execution policy via a virtual method:
+
+```cpp
+enum class ExecutionPolicy { Sync, Async, Subprocess };
+virtual ExecutionPolicy executionPolicy() const { return ExecutionPolicy::Async; }
+```
+
+| Policy | Dispatch | Who may use it |
+|--------|----------|----------------|
+| `Sync` | Runs on the calling thread, inline — no WorkerPool dispatch | Core built-in plugins **only**. Enforced at handler registration. Use only for fast, non-blocking operations (DB lookups, lambda construction, in-memory reads). |
+| `Async` | Dispatched to `WorkerPool` by the broker. Default for all handlers. | All plugins. |
+| `Subprocess` | IPC round-trip to a child process (not yet implemented — treated as `Async` until #23). | Handlers whose contract specialises `CapabilityCodec` with real serialisation. |
+
+`CapabilityBroker::invokeRaw` checks the policy: `Sync` handlers are called inline; `Async` handlers are posted to `WorkerPool` and a `CapabilityFuture<RawResult>` is returned immediately, resolving later when the worker finishes.
+
+### WorkerPool
+
+`WorkerPool` is a fixed-size thread pool (default: `std::thread::hardware_concurrency()`) owned by `Application` and injected into every `CapabilityContext` via `ctx.workerPool()`.
+
+- The broker uses it automatically for `Async` handlers — plugin authors do not post to it manually for top-level invocations.
+- Handlers may post sub-tasks directly (`ctx.workerPool()->post(fn)`) when a single invocation has internal parallelism (e.g., hashing a batch of files).
+- The pool is **fixed-size**. Never call `.get()` from inside an `Async` handler (see below).
+
+### Plugin-created threads
+
+Plugins may create their own threads (via `std::thread` or `QThread`) for **long-running background services** — persistent connections, polling loops, device monitors. This is intentional: such services do not fit the one-shot WorkerPool model.
+
+Rules for plugin background threads:
+
+1. All capability invocations from a background thread must still go through `broker.invoke<>()`. Never call handler methods directly.
+2. All reads/writes of persistent state must go through Core services (`MetadataService`, `CacheService`, etc.). Never write to the database directly or keep parallel in-memory caches.
+3. The plugin must stop all its background threads before `IPlugin::shutdown()` returns. The application does not forcibly terminate threads.
+
+---
+
+## Capability invocation rules
+
+### All invocations — including self-invocations — must go through the broker
+
+A plugin calling one of its own capabilities must use `broker.invoke<>()`, not call the handler method directly.
+
+**Rationale:** The broker is the only place that applies `ExecutionPolicy`. A direct call bypasses WorkerPool dispatch, making Async handlers run synchronously on the caller's thread — which breaks the threading model and may block the UI.
+
+This rule applies in all contexts:
+
+- UI widgets invoking capabilities: always `broker.invoke<>()`. Never hold a handler pointer in a UI component.
+- Handler A invoking handler B of the same plugin: `ctx.broker()->invoke<>()`.
+- Action lambdas (from `AssetOpenActionsContract`): any heavy work inside the lambda must go through `broker.invoke<>()`, never execute inline.
+- Plugin background threads: same rule — `broker.invoke<>()`.
+
+### Nested capability calls: never block inside an Async handler
+
+The WorkerPool is fixed-size. If an `Async` handler calls another `Async` capability and blocks on `.get()`, it occupies a pool thread while waiting for another pool task. If all threads are in this state, the pool deadlocks.
+
+**Rule:**
+- Inside an `Async` handler, use `co_await` (coroutine) or `.then()` for broker calls. Never `.get()`.
+- `Sync` handlers may call `.get()` on other `Sync` capabilities — they run inline on the calling thread, so no pool thread is occupied.
+- `Sync` handlers must not call `Async` capabilities and block on the result.
+
+### UI thread rules
+
+- UI code must never call `.get()` on an `Async` capability — it blocks the event loop.
+- Use `co_await onUI(broker.invoke<>(...), this)` (coroutine) or `.then(fn, this)` (callback) to resume on the UI thread after an Async capability resolves.
+- `Sync` capabilities may be called with `.get()` from the UI thread (they are always fast and non-blocking by definition).
+
+---
+
+## Handler design: stateless handlers
+
+### The rule
+
+A handler's member variables must contain **only**:
+
+1. **Immutable service handles** — references or pointers to Core services (`MetadataService`, `CacheService`, etc.) injected at construction, or accessed via `CapabilityContext`.
+2. **Immutable plugin configuration** — e.g., `pluginId_` set once in the constructor.
+
+### What is forbidden
+
+| Forbidden | Correct alternative |
+|-----------|-------------------|
+| In-memory result cache (`std::map<AssetId, Peaks> cache_`) | `CacheService` via `ctx.cache()` |
+| In-flight tracking set (`std::set<AssetId> inFlight_`) | `MetadataService` or a DB-backed job table |
+| Mutable state shared across concurrent invocations of the same handler | Core services (which handle their own locking) |
+
+**Rationale:** `Async` handlers may be invoked concurrently from multiple WorkerPool threads against the same handler instance. Member state would require its own locking and is invisible to other plugins or after restarts. Core services handle thread safety internally and survive process restarts.
+
+### Cross-capability persistent state
+
+Any state that persists across capability invocations, across different capabilities of the same plugin, or across process restarts must be stored in Core services:
+
+| Service | Use for |
+|---------|---------|
+| `ctx.metadata()` | Plugin-private data about an asset (`"plugin.asset"` scope) or the plugin itself (`"plugin"` scope) |
+| `ctx.cache()` | Derived / computed data with an eviction policy (waveform peaks, thumbnails) |
+| `ctx.assets()` | Reading or creating asset records |
+| `ctx.settings()` | Plugin configuration, last-seen tokens, feature flags |
+
+### CapabilityContext is the service access point
+
+`CapabilityContext` is passed to every `invokeTyped` call. It provides:
+
+```cpp
+ctx.broker()      // CapabilityBroker* — for invoking other capabilities
+ctx.workerPool()  // WorkerPool* — for posting sub-tasks
+ctx.metadata()    // MetadataService* — plugin-scoped persistent data
+ctx.cache()       // CacheService* — computed/derived data
+ctx.assets()      // AssetService* — asset records
+ctx.settings()    // SettingsService* — key-value configuration
+```
+
+Prefer accessing services through `ctx` rather than capturing them in constructor parameters. This keeps constructors thin and makes handlers easier to test.
+
+---
+
+## Writing async handlers with C++20 coroutines
+
+Handlers that invoke other capabilities asynchronously should be written as coroutines. This eliminates nested `.then()` chains and makes error handling straightforward.
+
+### Basic pattern
+
+```cpp
+// Declare the handler as a coroutine by returning CapabilityFuture<Result>
+// and using co_await / co_return inside.
+
+CapabilityFuture<WaveformResult>
+AudioWaveformHandler::invokeTyped(const WaveformRequest& req, CapabilityContext& ctx) {
+    // co_await suspends the coroutine here and resumes on the thread that
+    // resolves the future (a WorkerPool thread).
+    auto loc = co_await ctx.broker()->invoke<AssetLocatorContract>(locRef, req.asset);
+
+    auto peaks = co_await computePeaksAsync(loc.uri, ctx.workerPool());
+
+    co_return WaveformResult{peaks};
+}
+```
+
+### Thread resumption
+
+`co_await` on a plain `CapabilityFuture<T>` resumes the coroutine on **the thread that resolved the future** — typically a WorkerPool worker. This is correct for `Async` handlers.
+
+For `Sync` capabilities, `co_await` does not actually suspend (the future is already resolved), so the coroutine continues on the calling thread.
+
+### Important: same coroutine frame, different worker threads
+
+Because consecutive `co_await` statements may resume on different worker threads, do not rely on thread-local state across `co_await` suspension points. Local variables in the coroutine frame are safe (they are stored on the heap by the compiler), but thread-local globals are not.
+
+Since handlers are stateless (see above), this constraint rarely surfaces in practice.
+
+### UI-affine resumption (#22)
+
+UI code that needs to resume on the main thread after an async invocation:
+
+```cpp
+// In a QObject-derived class, use the onUI() helper:
+auto result = co_await clickin::onUI(broker->invoke<SomeContract>(ref, req), this);
+// Everything after this line runs on the UI thread.
+updateLabel(result.name);
+```
+
+Or the callback form (for non-coroutine call sites):
+
+```cpp
+broker->invoke<SomeContract>(ref, req).then(
+    [this](const SomeContract::Result& r) { updateLabel(r.name); },
+    this   // QObject* affinity — callback posted via Qt::QueuedConnection
+);
+```
+
+### When NOT to use coroutines
+
+`Sync` handlers that do not call other capabilities can just `return CapabilityFuture<Result>(result)` — a coroutine adds overhead for no benefit.
+
+---
+
 ## C++ style
 
 - **Standard:** C++20. Use concepts, ranges, and `std::span` where they improve clarity.
@@ -300,7 +478,7 @@ The `pluginNodeId` you choose should therefore be stable for the lifetime of a l
 - **Headers:** use `#pragma once`. Keep `src/sdk/` headers free of implementation details.
 - **Comments:** only where the *why* is non-obvious — hidden constraints, workarounds, subtle invariants. Do not describe what the code does.
 - **No exceptions across plugin boundaries.** Within a plugin, exceptions are fine internally; never let them propagate into `invokeRaw` — catch and convert to `RawResult` with an error code.
-- **Thread safety:** `CapabilityBroker::invokeRaw` must be callable from worker threads. Qt UI calls must stay on the main thread.
+- **Thread safety:** See "Threading model and execution policy" above for the full rules. In brief: `CapabilityBroker::invoke` is thread-safe; Qt UI calls must stay on the main thread; never call `.get()` on an `Async` future from the UI thread or from inside an `Async` handler.
 
 ---
 

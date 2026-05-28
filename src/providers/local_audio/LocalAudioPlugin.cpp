@@ -359,7 +359,8 @@ public:
     AudioMetadataHandler(const std::string& pluginId, MetadataService& meta)
         : pluginId_(pluginId), meta_(meta) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
 
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
@@ -426,7 +427,8 @@ public:
     AudioWaveformHandler(const std::string& pluginId, CacheService& cache)
         : pluginId_(pluginId), cache_(cache) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Async; }
 
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
@@ -510,7 +512,8 @@ class AudioPreviewHandler : public TypedCapabilityHandler<AudioPreviewContract> 
 public:
     explicit AudioPreviewHandler(const std::string& pluginId) : pluginId_(pluginId) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
 
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
@@ -544,7 +547,8 @@ public:
     AssetPreviewWidgetHandler(const std::string& pluginId, CapabilityBroker& broker)
         : pluginId_(pluginId), broker_(broker) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
 
     CapabilityDescriptor describe(const CapabilityQuery& query) override {
         if (query.assetId.empty()) return {.available = true, .priority = 10};

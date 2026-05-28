@@ -2,6 +2,7 @@
 #include "core/app/CoreContext.h"
 #include "core/app/PluginManager.h"
 #include "core/services/HierarchyService.h"
+#include "core/worker/WorkerPool.h"
 
 #include <memory>
 #include <string>
@@ -10,7 +11,6 @@
 namespace clickin {
 
 struct Application::Impl {
-    // Plugins staged here before initialize() creates PluginManager.
     std::vector<std::unique_ptr<IPlugin>> stagedPlugins;
 
     std::unique_ptr<DatabaseService>    dbService;
@@ -20,6 +20,7 @@ struct Application::Impl {
     std::unique_ptr<JobService>         jobs;
     std::unique_ptr<SettingsService>    settings;
     std::unique_ptr<HierarchyService>   hierarchy;
+    std::unique_ptr<WorkerPool>         workerPool;
     std::unique_ptr<CapabilityRegistry> capRegistry;
     std::unique_ptr<CapabilityBroker>   broker;
     std::unique_ptr<PluginManager>      plugins;
@@ -46,11 +47,21 @@ bool Application::initialize(const std::string& dbPath) {
     impl_->settings   = std::make_unique<SettingsService>(db);
     impl_->hierarchy  = std::make_unique<HierarchyService>(db);
 
-    // 3. Capability infrastructure.
+    // 3. WorkerPool for async capability dispatch.
+    impl_->workerPool = std::make_unique<WorkerPool>();
+
+    // 4. Capability infrastructure.
     impl_->capRegistry = std::make_unique<CapabilityRegistry>();
     impl_->broker      = std::make_unique<CapabilityBroker>(*impl_->capRegistry);
+    impl_->broker->setServices({
+        .workerPool = impl_->workerPool.get(),
+        .metadata   = impl_->metadata.get(),
+        .cache      = impl_->cache.get(),
+        .assets     = impl_->assets.get(),
+        .settings   = impl_->settings.get()
+    });
 
-    // 4. Plugin activation.
+    // 5. Plugin activation.
     impl_->plugins = std::make_unique<PluginManager>(*impl_->capRegistry);
     for (auto& p : impl_->stagedPlugins)
         impl_->plugins->addPlugin(std::move(p));
@@ -64,8 +75,13 @@ bool Application::initialize(const std::string& dbPath) {
 
 void Application::shutdown() {
     if (impl_->plugins) impl_->plugins->shutdownAll();
-
     impl_->plugins.reset();
+
+    // Drain the WorkerPool BEFORE destroying handlers or services.
+    // WorkerPool's destructor joins all threads, ensuring no tasks reference
+    // destroyed objects.
+    impl_->workerPool.reset();
+
     impl_->broker.reset();
     impl_->capRegistry.reset();
     impl_->settings.reset();

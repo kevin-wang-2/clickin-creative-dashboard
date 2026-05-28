@@ -17,7 +17,8 @@ public:
     FallbackNameHandler(const std::string& pluginId, AssetService& assets)
         : pluginId_(pluginId), assets_(assets) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
 
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 0};
@@ -42,7 +43,8 @@ class FallbackKindHandler : public TypedCapabilityHandler<AssetKindContract> {
 public:
     explicit FallbackKindHandler(const std::string& pluginId) : pluginId_(pluginId) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
 
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 0};
@@ -63,7 +65,8 @@ class FallbackThumbnailHandler : public TypedCapabilityHandler<AssetThumbnailCon
 public:
     explicit FallbackThumbnailHandler(const std::string& pluginId) : pluginId_(pluginId) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
 
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 0};
@@ -87,7 +90,8 @@ class FallbackOpenActionsHandler : public TypedCapabilityHandler<AssetOpenAction
 public:
     explicit FallbackOpenActionsHandler(const std::string& pluginId) : pluginId_(pluginId) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
 
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 0};
@@ -110,7 +114,8 @@ class FallbackExecuteActionHandler : public TypedCapabilityHandler<AssetExecuteA
 public:
     explicit FallbackExecuteActionHandler(const std::string& pluginId) : pluginId_(pluginId) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
 
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 0};

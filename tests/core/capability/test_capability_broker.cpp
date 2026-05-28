@@ -49,7 +49,11 @@ public:
     explicit PingHandler(std::string id, int priority = 10, bool available = true)
         : id_(std::move(id)), priority_(priority), available_(available) {}
 
-    std::string_view providerId() const override { return id_; }
+    std::string_view providerId()      const override { return id_; }
+    // Sync: fast in-process handler — no WorkerPool needed in unit tests.
+    clickin::ExecutionPolicy executionPolicy() const override {
+        return clickin::ExecutionPolicy::Sync;
+    }
 
     clickin::CapabilityDescriptor describe(const clickin::CapabilityQuery&) override {
         clickin::CapabilityDescriptor d;
@@ -205,7 +209,10 @@ TEST(CapabilityBroker, ContextCarriesBrokerRef) {
     struct ContextCheckHandler : public clickin::TypedCapabilityHandler<PingV1> {
         clickin::CapabilityBroker** captured;
         explicit ContextCheckHandler(clickin::CapabilityBroker** p) : captured(p) {}
-        std::string_view providerId() const override { return "provider.ctx"; }
+        std::string_view providerId()      const override { return "provider.ctx"; }
+        clickin::ExecutionPolicy executionPolicy() const override {
+            return clickin::ExecutionPolicy::Sync;
+        }
         clickin::CapabilityDescriptor describe(const clickin::CapabilityQuery&) override {
             return {true, 1};
         }
@@ -213,7 +220,7 @@ TEST(CapabilityBroker, ContextCarriesBrokerRef) {
         clickin::CapabilityFuture<PingV1::Result>
         invokeTyped(const PingV1::Request&, clickin::CapabilityContext& ctx) override {
             *captured = ctx.broker();
-            return clickin::CapabilityFuture<PingV1::Result>({});
+            return clickin::CapabilityFuture<PingV1::Result>(PingV1::Result{});
         }
     };
 

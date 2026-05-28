@@ -8,12 +8,17 @@
 #include "sdk/contracts/builtin/AssetNameContract.h"
 #include "sdk/contracts/builtin/AssetKindContract.h"
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
+#include "sdk/contracts/builtin/DiscoverTabContract.h"
 
 #include <QDesktopServices>
 #include <QDir>
+#include <QFileDialog>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QProcess>
+#include <QPushButton>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -291,6 +296,114 @@ private:
     MetadataService& meta_;
 };
 
+// builtin.ui.discover.tab:v1
+class LocalFileDiscoverTabHandler : public TypedCapabilityHandler<DiscoverTabContract> {
+public:
+    LocalFileDiscoverTabHandler(const std::string& pluginId,
+                                AssetService& assets,
+                                MetadataService& meta)
+        : pluginId_(pluginId), assets_(assets), meta_(meta) {}
+
+    std::string_view providerId() const override { return pluginId_; }
+    CapabilityDescriptor describe(const CapabilityQuery&) override {
+        return {.available = true, .priority = 10};
+    }
+
+protected:
+    CapabilityFuture<DiscoverTabContract::Result>
+    invokeTyped(const DiscoverTabContract::Request&, CapabilityContext&) override {
+        AssetService*    assets = &assets_;
+        MetadataService* meta   = &meta_;
+        std::string      pid    = pluginId_;
+
+        return CapabilityFuture(DiscoverTabContract::Result{
+            .tabId    = "builtin.local_file.discover",
+            .label    = "Local Files",
+            .priority = 10,
+            .widgetFactory = [assets, meta, pid](QWidget* parent) -> QWidget* {
+                return buildScanWidget(assets, meta, pid, parent);
+            }
+        });
+    }
+
+private:
+    static QWidget* buildScanWidget(AssetService* assets, MetadataService* meta,
+                                    const std::string& pid, QWidget* parent) {
+        auto* widget = new QWidget(parent);
+        auto* layout = new QVBoxLayout(widget);
+        layout->setContentsMargins(12, 12, 12, 12);
+        layout->setSpacing(8);
+
+        auto* row       = new QWidget(widget);
+        auto* rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+
+        auto* pathEdit  = new QLineEdit(row);
+        pathEdit->setPlaceholderText("Folder path to scan\xe2\x80\xa6");
+        auto* browseBtn = new QPushButton("Browse\xe2\x80\xa6", row);
+        auto* scanBtn   = new QPushButton("Scan", row);
+        rowLayout->addWidget(pathEdit, 1);
+        rowLayout->addWidget(browseBtn);
+        rowLayout->addWidget(scanBtn);
+
+        auto* status = new QLabel("Ready.", widget);
+
+        layout->addWidget(row);
+        layout->addWidget(status);
+        layout->addStretch();
+
+        QObject::connect(browseBtn, &QPushButton::clicked, widget, [pathEdit, widget]() {
+            QString dir = QFileDialog::getExistingDirectory(
+                widget, "Select folder to scan", QDir::homePath());
+            if (!dir.isEmpty()) pathEdit->setText(dir);
+        });
+
+        QObject::connect(scanBtn, &QPushButton::clicked, widget,
+            [assets, meta, pid, pathEdit, status]() {
+                QString qpath = pathEdit->text().trimmed();
+                if (qpath.isEmpty()) { status->setText("Enter a folder path first."); return; }
+
+                status->setText("Scanning\xe2\x80\xa6");
+
+                std::filesystem::path root(qpath.toStdString());
+                std::error_code ec;
+                if (!std::filesystem::is_directory(root, ec)) {
+                    status->setText("Not a valid directory.");
+                    return;
+                }
+
+                int found = 0;
+                for (auto& entry : std::filesystem::recursive_directory_iterator(
+                         root, std::filesystem::directory_options::skip_permission_denied, ec)) {
+                    if (!entry.is_regular_file()) continue;
+                    if (!isSupportedAudio(entry.path())) continue;
+
+                    std::string name  = entry.path().stem().string();
+                    std::string fpath = entry.path().string();
+                    std::string uri   = "file://" + fpath;
+                    if (!assets->findAssetByUri(uri).empty()) continue;
+
+                    std::string ext = entry.path().extension().string();
+                    for (auto& c : ext)
+                        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+                    std::string assetId = assets->createAsset(name, extensionToKind(ext));
+                    assets->createAssetProvider(assetId, pid, uri);
+                    storeFilePath(*meta, pid, assetId, fpath);
+                    ++found;
+                }
+
+                status->setText(QString("Done. Found %1 new asset(s).").arg(found));
+            });
+
+        return widget;
+    }
+
+    std::string      pluginId_;
+    AssetService&    assets_;
+    MetadataService& meta_;
+};
+
 // ── LocalFilePlugin ───────────────────────────────────────────────────────────
 
 PluginManifest LocalFilePlugin::manifest() const {
@@ -311,8 +424,9 @@ std::vector<std::unique_ptr<IRawCapabilityHandler>> LocalFilePlugin::createCapab
     h.push_back(std::make_unique<LocatorHandler>      (pluginId_, *metadata_));
     h.push_back(std::make_unique<NameHandler>         (pluginId_, *metadata_));
     h.push_back(std::make_unique<KindHandler>         (pluginId_, *metadata_));
-    h.push_back(std::make_unique<OpenActionsHandler>  (pluginId_));
-    h.push_back(std::make_unique<ExecuteActionHandler>(pluginId_, *metadata_));
+    h.push_back(std::make_unique<OpenActionsHandler>         (pluginId_));
+    h.push_back(std::make_unique<ExecuteActionHandler>       (pluginId_, *metadata_));
+    h.push_back(std::make_unique<LocalFileDiscoverTabHandler>(pluginId_, *assets_, *metadata_));
     return h;
 }
 

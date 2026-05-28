@@ -1,5 +1,6 @@
 #include "ui/shell/MainWindow.h"
 #include "ui/asset_list/AssetListView.h"
+#include "ui/discover/DiscoverManagerDialog.h"
 #include "ui/plugin_mgmt/PluginManagementView.h"
 #include "ui/inspector/InspectorPanel.h"
 #include "ui/preview_host/PreviewHost.h"
@@ -7,7 +8,6 @@
 #include "core/app/Application.h"
 #include "core/app/CoreContext.h"
 #include "sdk/contracts/builtin/MenuBarItemsContract.h"
-#include "sdk/contracts/builtin/DiscoverTabContract.h"
 
 #include <QDialog>
 #include <QKeySequence>
@@ -19,24 +19,19 @@
 #include <QTabWidget>
 #include <QVBoxLayout>
 
-#include <algorithm>
-#include <unordered_map>
-
 struct MainWindow::Impl {
     clickin::Application& app;
 
-    AssetListView*        assetList  = nullptr;
-    PreviewHost*          preview    = nullptr;
-    PluginManagementView* pluginMgmt = nullptr;
-    JobStatusBar*         jobStatus  = nullptr;
-    QTabWidget*           tabs       = nullptr;
+    AssetListView*        assetList      = nullptr;
+    PreviewHost*          preview        = nullptr;
+    PluginManagementView* pluginMgmt     = nullptr;
+    JobStatusBar*         jobStatus      = nullptr;
+    QTabWidget*           tabs           = nullptr;
 
-    // Inspector lives in a modeless dialog — created on first use.
-    QDialog*        detailDialog = nullptr;
-    InspectorPanel* inspector    = nullptr;
-
-    // Lazy-create plugin-contributed discover tabs: placeholder widget → factory.
-    std::unordered_map<QWidget*, std::function<QWidget*(QWidget*)>> lazyTabFactories;
+    // Modeless dialogs — created on first use.
+    QDialog*               detailDialog   = nullptr;
+    InspectorPanel*        inspector      = nullptr;
+    DiscoverManagerDialog* discoverDialog = nullptr;
 
     explicit Impl(clickin::Application& a) : app(a) {}
 };
@@ -64,12 +59,9 @@ MainWindow::MainWindow(clickin::Application& app, QWidget* parent)
     splitter->setStretchFactor(1, 2);
 
     assetsLayout->addWidget(splitter);
-    impl_->tabs->addTab(assetsPage, "Assets");  // priority 0, always tab 0
+    impl_->tabs->addTab(assetsPage, "Assets");
 
-    // ── Plugin-contributed discover tabs (inserted before Plugins tab) ────────
-    populatePluginTabs();
-
-    // ── Plugins tab (always last) ─────────────────────────────────────────────
+    // ── Plugins tab ───────────────────────────────────────────────────────────
     impl_->pluginMgmt = new PluginManagementView(app, this);
     impl_->tabs->addTab(impl_->pluginMgmt, "Plugins");
 
@@ -84,8 +76,6 @@ MainWindow::MainWindow(clickin::Application& app, QWidget* parent)
     populatePluginMenuItems();
 
     // ── Connections ───────────────────────────────────────────────────────────
-    connect(impl_->tabs, &QTabWidget::currentChanged,
-            this,        &MainWindow::onTabChanged);
     connect(impl_->assetList, &AssetListView::previewRequested,
             impl_->preview,   &PreviewHost::onAssetSelected);
     connect(impl_->assetList, &AssetListView::showDetailsRequested,
@@ -97,9 +87,9 @@ MainWindow::~MainWindow() = default;
 void MainWindow::buildMenuBar() {
     QMenu* discoveryMenu = menuBar()->addMenu("Discovery");
 
-    QAction* scanAct = discoveryMenu->addAction("Scan Folder\xe2\x80\xa6");
-    scanAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
-    connect(scanAct, &QAction::triggered, impl_->assetList, &AssetListView::onScanFolder);
+    QAction* discoverAct = discoveryMenu->addAction("Discover Manager\xe2\x80\xa6");
+    discoverAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    connect(discoverAct, &QAction::triggered, this, &MainWindow::openDiscoverManager);
 
     QAction* refreshAct = discoveryMenu->addAction("Refresh");
     refreshAct->setShortcut(QKeySequence::Refresh);
@@ -112,18 +102,16 @@ void MainWindow::buildMenuBar() {
     });
 }
 
-void MainWindow::onTabChanged(int index) {
-    QWidget* placeholder = impl_->tabs->widget(index);
-    auto it = impl_->lazyTabFactories.find(placeholder);
-    if (it == impl_->lazyTabFactories.end()) return;
-
-    auto factory = std::move(it->second);
-    impl_->lazyTabFactories.erase(it);
-
-    QWidget* real = factory(placeholder);
-    auto* layout = new QVBoxLayout(placeholder);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(real);
+void MainWindow::openDiscoverManager() {
+    if (!impl_->discoverDialog) {
+        impl_->discoverDialog = new DiscoverManagerDialog(impl_->app, this);
+        // Refresh asset list when the user closes the discover dialog.
+        connect(impl_->discoverDialog, &QDialog::finished,
+                impl_->assetList, &AssetListView::refresh);
+    }
+    impl_->discoverDialog->show();
+    impl_->discoverDialog->raise();
+    impl_->discoverDialog->activateWindow();
 }
 
 void MainWindow::populatePluginMenuItems() {
@@ -136,7 +124,6 @@ void MainWindow::populatePluginMenuItems() {
             .get();
 
         for (const auto& item : result.items) {
-            // Find or create the named menu.
             QString menuName = QString::fromStdString(item.menuName);
             QMenu* targetMenu = nullptr;
             for (QAction* a : menuBar()->actions()) {
@@ -145,9 +132,8 @@ void MainWindow::populatePluginMenuItems() {
                     break;
                 }
             }
-            if (!targetMenu) {
+            if (!targetMenu)
                 targetMenu = menuBar()->addMenu(menuName);
-            }
 
             QAction* act = targetMenu->addAction(QString::fromStdString(item.label));
             if (!item.shortcut.empty())
@@ -163,37 +149,6 @@ void MainWindow::populatePluginMenuItems() {
                 callback();
             });
         }
-    }
-}
-
-void MainWindow::populatePluginTabs() {
-    auto ctx  = impl_->app.coreContext();
-    auto refs = ctx.capabilities.findAll<clickin::DiscoverTabContract>();
-
-    // Collect all tab descriptors.
-    struct TabDesc {
-        std::string label;
-        int         priority;
-        std::function<QWidget*(QWidget*)> factory;
-    };
-    std::vector<TabDesc> descs;
-    for (const auto& ref : refs) {
-        auto result = ctx.capabilities
-            .invoke<clickin::DiscoverTabContract>(ref, clickin::DiscoverTabContract::Request{})
-            .get();
-        if (!result.label.empty() && result.widgetFactory)
-            descs.push_back({result.label, result.priority, result.widgetFactory});
-    }
-
-    // Sort by priority ascending (lower = further left).
-    std::sort(descs.begin(), descs.end(),
-              [](const TabDesc& a, const TabDesc& b) { return a.priority < b.priority; });
-
-    // Insert each tab at the current end (before Plugins, which is added after).
-    for (auto& desc : descs) {
-        auto* placeholder = new QWidget(this);
-        impl_->tabs->addTab(placeholder, QString::fromStdString(desc.label));
-        impl_->lazyTabFactories[placeholder] = std::move(desc.factory);
     }
 }
 

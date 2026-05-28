@@ -6,6 +6,7 @@ target_link_libraries(clickin_ui_shell PUBLIC
     clickin_core
     clickin_providers
     clickin_ui_asset_list
+    clickin_ui_discover
     clickin_ui_plugin_mgmt
     clickin_ui_inspector
     clickin_ui_job_status

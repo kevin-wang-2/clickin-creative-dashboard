@@ -2,6 +2,7 @@
 #include "core/app/Application.h"
 #include "core/app/CoreContext.h"
 #include "core/capability/CapabilityBroker.h"
+#include "core/capability/CapabilityFutureQt.h"
 #include "sdk/contracts/builtin/AssetRef.h"
 #include "sdk/contracts/ui/AssetPreviewWidgetContract.h"
 
@@ -13,16 +14,31 @@
 
 struct PreviewHost::Impl {
     clickin::Application& app;
-    QVBoxLayout*  layout      = nullptr;
-    QWidget*      header      = nullptr;
-    QToolButton*  popOutBtn   = nullptr;
-    QLabel*       placeholder = nullptr;
-    QWidget*      current     = nullptr;
+    QVBoxLayout*  layout       = nullptr;
+    QWidget*      header       = nullptr;
+    QToolButton*  popOutBtn    = nullptr;
+    QLabel*       placeholder  = nullptr;
+    QLabel*       loadingLabel = nullptr;
+    QWidget*      current      = nullptr;
 
     QPointer<QWidget> popOutWindow;
     std::function<QWidget*(QWidget*)> windowFactory;
 
+    // Monotonically increasing token; compared in thenOnUi callbacks to discard
+    // results from a superseded selection.
+    uint64_t loadToken = 0;
+
     explicit Impl(clickin::Application& a) : app(a) {}
+
+    void showLoading() {
+        if (current) {
+            layout->removeWidget(current);
+            current->deleteLater();
+            current = nullptr;
+        }
+        placeholder->hide();
+        loadingLabel->show();
+    }
 
     void swapWidget(QWidget* next) {
         if (current) {
@@ -30,6 +46,7 @@ struct PreviewHost::Impl {
             current->deleteLater();
             current = nullptr;
         }
+        loadingLabel->hide();
         if (next) {
             placeholder->hide();
             current = next;
@@ -71,6 +88,12 @@ PreviewHost::PreviewHost(clickin::Application& app, QWidget* parent)
     impl_->placeholder->setStyleSheet("color: #888;");
     impl_->layout->addWidget(impl_->placeholder, 1);
 
+    impl_->loadingLabel = new QLabel("Loading\xe2\x80\xa6", this);
+    impl_->loadingLabel->setAlignment(Qt::AlignCenter);
+    impl_->loadingLabel->setStyleSheet("color: #888;");
+    impl_->loadingLabel->hide();
+    impl_->layout->addWidget(impl_->loadingLabel, 1);
+
     connect(impl_->popOutBtn, &QToolButton::clicked,
             this, &PreviewHost::onPopOut);
 }
@@ -91,25 +114,31 @@ void PreviewHost::onAssetSelected(const QString& assetId) {
         return;
     }
 
-    auto result = ctx.capabilities
-        .invoke<clickin::AssetPreviewWidgetContract>(
-            ref, clickin::AssetRef{assetId.toStdString(), ""})
-        .get();
+    impl_->showLoading();
+    uint64_t token = ++impl_->loadToken;
 
-    if (!result.supportsEmbedded || !result.embeddedFactory) {
-        impl_->placeholder->setText("No preview available");
-        impl_->swapWidget(nullptr);
-        return;
-    }
+    clickin::thenOnUi(
+        ctx.capabilities.invoke<clickin::AssetPreviewWidgetContract>(
+            ref, clickin::AssetRef{assetId.toStdString(), ""}),
+        this,
+        [this, token](clickin::AssetPreviewWidgetContract::Result result) {
+            if (token != impl_->loadToken) return;  // superseded by a newer selection
 
-    if (result.supportsWindow && result.windowFactory) {
-        impl_->windowFactory = result.windowFactory;
-        impl_->header->show();
-    }
+            if (!result.supportsEmbedded || !result.embeddedFactory) {
+                impl_->placeholder->setText("No preview available");
+                impl_->swapWidget(nullptr);
+                return;
+            }
 
-    impl_->placeholder->setText(
-        "Select an asset and press Space or double-click to preview");
-    impl_->swapWidget(result.embeddedFactory(this));
+            if (result.supportsWindow && result.windowFactory) {
+                impl_->windowFactory = std::move(result.windowFactory);
+                impl_->header->show();
+            }
+
+            impl_->placeholder->setText(
+                "Select an asset and press Space or double-click to preview");
+            impl_->swapWidget(result.embeddedFactory(this));
+        });
 }
 
 void PreviewHost::onPopOut() {

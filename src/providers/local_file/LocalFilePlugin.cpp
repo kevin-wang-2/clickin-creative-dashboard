@@ -1,5 +1,6 @@
 #include "providers/local_file/LocalFilePlugin.h"
 #include "core/app/CoreContext.h"
+#include "core/db/Database.h"
 #include "core/services/AssetService.h"
 #include "core/services/HierarchyService.h"
 #include "core/services/MetadataService.h"
@@ -10,6 +11,11 @@
 #include "sdk/contracts/builtin/AssetKindContract.h"
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
 #include "sdk/contracts/builtin/DiscoverTabContract.h"
+#include "sdk/contracts/builtin/AssetHierarchyRootsContract.h"
+#include "sdk/contracts/builtin/AssetHierarchyChildrenContract.h"
+#include "sdk/contracts/builtin/AssetHierarchyVersionContract.h"
+#include "sdk/contracts/builtin/HierarchyNode.h"
+#include "core/capability/CapabilityBroker.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -28,9 +34,11 @@
 #include <array>
 #include <filesystem>
 #include <set>
+#include <sstream>
 #include <stack>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace clickin {
 
@@ -63,21 +71,100 @@ static std::string extensionToKind(const std::string& ext) {
 
 // ── Metadata helpers ──────────────────────────────────────────────────────────
 
-static constexpr std::string_view kNsPath    = "file.path";
-static constexpr std::string_view kNsSize    = "file.size_bytes";
+static constexpr std::string_view kNsPath          = "file.path";
+static constexpr std::string_view kNsHierarchyGraph = "hierarchy";
 
 static void storeFilePath(MetadataService& meta, const std::string& pluginId,
                            const std::string& assetId, const std::string& path) {
     auto bytes = std::span<const std::byte>(
         reinterpret_cast<const std::byte*>(path.data()), path.size());
-    meta.write(pluginId, ScopeRef{"asset", assetId}, kNsPath, bytes, "utf8");
+    meta.write(pluginId, ScopeRef{"plugin.asset", assetId}, kNsPath, bytes, "utf8");
 }
 
 static std::string readFilePath(MetadataService& meta, const std::string& pluginId,
                                  const std::string& assetId) {
-    auto rec = meta.read(pluginId, ScopeRef{"asset", assetId}, kNsPath);
+    auto rec = meta.read(pluginId, ScopeRef{"plugin.asset", assetId}, kNsPath);
     if (!rec || rec->data.empty()) return {};
     return {reinterpret_cast<const char*>(rec->data.data()), rec->data.size()};
+}
+
+// ── Hierarchy graph blob ──────────────────────────────────────────────────────
+// The entire adjacency list is packed into one MetadataService entry per plugin
+// (scope="plugin", ns="hierarchy") so the number of DB rows does not scale with
+// the number of nodes. Format is plugin-defined; this plugin uses plain text:
+//
+//   v:<versionToken>\n
+//   r:<rootAssetId>\n          (one line per root)
+//   c:<parentId>:<c1>,<c2>\n  (one line per parent that has children)
+//
+// All IDs are UUIDs ([0-9a-f-]), so ':', ',' and '\n' are safe delimiters.
+
+struct HierarchyGraph {
+    std::string version;
+    std::vector<std::string>                              roots;
+    std::unordered_map<std::string, std::vector<std::string>> children; // parentId → childIds
+};
+
+static std::vector<std::byte> serializeGraph(const HierarchyGraph& g) {
+    std::string buf;
+    buf.reserve(64 + g.roots.size() * 40 + g.children.size() * 80);
+    buf += "v:"; buf += g.version; buf += '\n';
+    for (const auto& r : g.roots) {
+        buf += "r:"; buf += r; buf += '\n';
+    }
+    for (const auto& [parent, kids] : g.children) {
+        buf += "c:"; buf += parent; buf += ':';
+        for (size_t i = 0; i < kids.size(); ++i) {
+            if (i) buf += ',';
+            buf += kids[i];
+        }
+        buf += '\n';
+    }
+    return {reinterpret_cast<const std::byte*>(buf.data()),
+            reinterpret_cast<const std::byte*>(buf.data() + buf.size())};
+}
+
+static HierarchyGraph parseGraph(const std::vector<std::byte>& bytes) {
+    HierarchyGraph g;
+    if (bytes.empty()) return g;
+    std::string s(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    std::istringstream ss(s);
+    std::string line;
+    while (std::getline(ss, line)) {
+        if (line.size() < 2) continue;
+        const char tag = line[0];
+        if (tag == 'v' && line[1] == ':') {
+            g.version = line.substr(2);
+        } else if (tag == 'r' && line[1] == ':') {
+            g.roots.push_back(line.substr(2));
+        } else if (tag == 'c' && line[1] == ':') {
+            auto rest   = line.substr(2);
+            auto colon  = rest.find(':');
+            if (colon == std::string::npos) continue;
+            std::string parent   = rest.substr(0, colon);
+            std::string childStr = rest.substr(colon + 1);
+            std::vector<std::string> kids;
+            std::istringstream cs(childStr);
+            std::string kid;
+            while (std::getline(cs, kid, ','))
+                if (!kid.empty()) kids.push_back(kid);
+            g.children[std::move(parent)] = std::move(kids);
+        }
+    }
+    return g;
+}
+
+static void storeHierarchyGraph(MetadataService& meta, const std::string& pluginId,
+                                  const HierarchyGraph& g) {
+    auto bytes = serializeGraph(g);
+    meta.write(pluginId, ScopeRef{"plugin", pluginId}, kNsHierarchyGraph,
+               std::span<const std::byte>(bytes), "text/local-file-hierarchy");
+}
+
+static HierarchyGraph loadHierarchyGraph(MetadataService& meta, const std::string& pluginId) {
+    auto rec = meta.read(pluginId, ScopeRef{"plugin", pluginId}, kNsHierarchyGraph);
+    if (!rec) return {};
+    return parseGraph(rec->data);
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -97,13 +184,12 @@ public:
 
 protected:
     CapabilityFuture<AssetDiscoveryContract::Result>
-    invokeTyped(const AssetDiscoveryContract::Request& req, CapabilityContext&) override {
+    invokeTyped(const AssetDiscoveryContract::Request& req, CapabilityContext& ctx) override {
         AssetDiscoveryContract::Result result;
 
         if (req.sourceType != "local.folder") return CapabilityFuture(result);
 
         std::filesystem::path root(req.uri);
-        // Normalize: remove trailing separator so filename() is non-empty.
         if (root.filename().empty()) root = root.parent_path();
 
         std::error_code ec;
@@ -112,7 +198,6 @@ protected:
         // ── Phase 1: collect all audio files under root ───────────────────────
         struct AudioFile { std::filesystem::path path; std::string kind; };
         std::vector<AudioFile> audioFiles;
-
         for (auto& entry : std::filesystem::recursive_directory_iterator(
                  root, std::filesystem::directory_options::skip_permission_denied, ec)) {
             if (!entry.is_regular_file(ec)) continue;
@@ -122,10 +207,9 @@ protected:
                 c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             audioFiles.push_back({entry.path(), extensionToKind(ext)});
         }
-
         if (audioFiles.empty()) return CapabilityFuture(result);
 
-        // ── Phase 2: find/create root folder asset and clear stale hierarchy ──
+        // ── Phase 2: find/create root folder asset ────────────────────────────
         std::string rootStr = root.string();
         std::string rootUri = "file://" + rootStr;
         std::string rootAssetId = assets_.findAssetByUri(rootUri);
@@ -135,63 +219,78 @@ protected:
             storeFilePath(meta_, pluginId_, rootAssetId, rootStr);
         }
 
-        hier_.removeAllByPlugin(pluginId_);
-        std::string rootNodeId = hier_.createNode(pluginId_, rootAssetId);
-
-        // Cache for already-seen directory nodes (path → nodeId) to avoid
-        // creating duplicate nodes when multiple audio files share ancestors.
+        // ── Phase 3: build adjacency list in memory ───────────────────────────
+        // path → assetId; deduplicates folder node creation across audio file paths.
         std::unordered_map<std::string, std::string> dirCache;
-        dirCache[rootStr] = rootNodeId;
+        dirCache[rootStr] = rootAssetId;
 
-        // ── Phase 3: build hierarchy along each audio file's ancestor chain ───
+        std::unordered_map<std::string, std::vector<std::string>> childrenMap;
+        std::unordered_map<std::string, std::unordered_set<std::string>> childrenSeen;
+
+        auto addChild = [&](const std::string& parentId, const std::string& childId) {
+            if (childrenSeen[parentId].insert(childId).second)
+                childrenMap[parentId].push_back(childId);
+        };
+
         for (auto& [filePath, kind] : audioFiles) {
-            // Collect ancestors between root (exclusive) and file's parent (inclusive).
             std::vector<std::filesystem::path> ancestors;
             auto cur = filePath.parent_path();
             while (cur.string() != rootStr && cur != cur.parent_path()) {
                 ancestors.push_back(cur);
                 cur = cur.parent_path();
             }
-            std::reverse(ancestors.begin(), ancestors.end()); // root-child first
+            std::reverse(ancestors.begin(), ancestors.end());
 
-            std::string parentNodeId = rootNodeId;
+            std::string parentAssetId = rootAssetId;
             for (auto& ancestor : ancestors) {
                 std::string ancestorPath = ancestor.string();
                 auto it = dirCache.find(ancestorPath);
-                std::string folderNodeId;
+                std::string folderAssetId;
                 if (it != dirCache.end()) {
-                    folderNodeId = it->second;
+                    folderAssetId = it->second;
                 } else {
-                    std::string uri      = "file://" + ancestorPath;
-                    std::string folderId = assets_.findAssetByUri(uri);
-                    if (folderId.empty()) {
-                        folderId = assets_.createAsset(
+                    std::string uri = "file://" + ancestorPath;
+                    folderAssetId = assets_.findAssetByUri(uri);
+                    if (folderAssetId.empty()) {
+                        folderAssetId = assets_.createAsset(
                             ancestor.filename().string(), "folder");
-                        assets_.createAssetProvider(folderId, pluginId_, uri);
-                        storeFilePath(meta_, pluginId_, folderId, ancestorPath);
+                        assets_.createAssetProvider(folderAssetId, pluginId_, uri);
+                        storeFilePath(meta_, pluginId_, folderAssetId, ancestorPath);
                     }
-                    folderNodeId = hier_.createNode(pluginId_, folderId);
-                    dirCache[ancestorPath] = folderNodeId;
-                    hier_.addEdge(parentNodeId, folderNodeId);
+                    dirCache[ancestorPath] = folderAssetId;
+                    addChild(parentAssetId, folderAssetId);
                 }
-                parentNodeId = folderNodeId;
+                parentAssetId = folderAssetId;
             }
 
-            // Create/find the audio file asset and link under its immediate parent.
-            std::string fileUri     = "file://" + filePath.string();
+            std::string fileUri = "file://" + filePath.string();
             std::string fileAssetId = assets_.findAssetByUri(fileUri);
             if (fileAssetId.empty()) {
                 std::string name = filePath.stem().string();
-                int64_t size = static_cast<int64_t>(
-                    std::filesystem::file_size(filePath, ec));
+                int64_t size = static_cast<int64_t>(std::filesystem::file_size(filePath, ec));
                 fileAssetId = assets_.createAsset(name, kind);
                 assets_.createAssetProvider(fileAssetId, pluginId_, fileUri);
                 storeFilePath(meta_, pluginId_, fileAssetId, filePath.string());
                 result.assets.push_back({name, pluginId_, {}, size});
             }
-            std::string fileNodeId = hier_.createNode(pluginId_, fileAssetId);
-            hier_.addEdge(parentNodeId, fileNodeId);
+            addChild(parentAssetId, fileAssetId);
         }
+
+        // ── Phase 4: merge with existing graph and persist (single blob) ────
+        // V1 assumption: files are never deleted, so accumulated scan data stays valid.
+        // When scanning a sub-folder that is already reachable from a previously-scanned
+        // parent, HierarchyRootsHandler suppresses it from the roots list at query time.
+        HierarchyGraph graph = loadHierarchyGraph(meta_, pluginId_);
+        if (std::find(graph.roots.begin(), graph.roots.end(), rootAssetId) == graph.roots.end())
+            graph.roots.push_back(rootAssetId);
+        for (auto& [parent, kids] : childrenMap)  // overwrite this scan's adjacency entries
+            graph.children[std::move(parent)] = std::move(kids);
+        graph.version = Database::generateId();
+        storeHierarchyGraph(meta_, pluginId_, graph);
+
+        // ── Phase 5: rebuild the hierarchy cache ──────────────────────────────
+        if (ctx.broker())
+            hier_.traverse(pluginId_, *ctx.broker());
 
         return CapabilityFuture(result);
     }
@@ -201,6 +300,89 @@ private:
     AssetService&     assets_;
     MetadataService&  meta_;
     HierarchyService& hier_;
+};
+
+// builtin.asset.hierarchy.roots:v1
+class HierarchyRootsHandler : public TypedCapabilityHandler<AssetHierarchyRootsContract> {
+public:
+    HierarchyRootsHandler(const std::string& pluginId, MetadataService& meta)
+        : pluginId_(pluginId), meta_(meta) {}
+
+    std::string_view providerId() const override { return pluginId_; }
+    CapabilityDescriptor describe(const CapabilityQuery&) override {
+        return {.available = true, .priority = 10};
+    }
+
+protected:
+    CapabilityFuture<AssetHierarchyRootsContract::Result>
+    invokeTyped(const AssetHierarchyRootsContract::Request&, CapabilityContext&) override {
+        auto g = loadHierarchyGraph(meta_, pluginId_);
+        AssetHierarchyRootsContract::Result result;
+        for (const auto& assetId : g.roots) {
+            bool hasChildren = g.children.count(assetId) && !g.children.at(assetId).empty();
+            result.nodes.push_back({assetId, assetId, hasChildren});
+        }
+        return CapabilityFuture(result);
+    }
+
+private:
+    std::string      pluginId_;
+    MetadataService& meta_;
+};
+
+// builtin.asset.hierarchy.children:v1
+class HierarchyChildrenHandler : public TypedCapabilityHandler<AssetHierarchyChildrenContract> {
+public:
+    HierarchyChildrenHandler(const std::string& pluginId, MetadataService& meta)
+        : pluginId_(pluginId), meta_(meta) {}
+
+    std::string_view providerId() const override { return pluginId_; }
+    CapabilityDescriptor describe(const CapabilityQuery&) override {
+        return {.available = true, .priority = 10};
+    }
+
+protected:
+    CapabilityFuture<AssetHierarchyChildrenContract::Result>
+    invokeTyped(const AssetHierarchyChildrenContract::Request& req, CapabilityContext&) override {
+        auto g = loadHierarchyGraph(meta_, pluginId_);
+        AssetHierarchyChildrenContract::Result result;
+        auto it = g.children.find(req.nodeId);
+        if (it != g.children.end()) {
+            for (const auto& assetId : it->second) {
+                bool hasChildren = g.children.count(assetId) && !g.children.at(assetId).empty();
+                result.nodes.push_back({assetId, assetId, hasChildren});
+            }
+        }
+        return CapabilityFuture(result);
+    }
+
+private:
+    std::string      pluginId_;
+    MetadataService& meta_;
+};
+
+// builtin.asset.hierarchy.version:v1
+class HierarchyVersionHandler : public TypedCapabilityHandler<AssetHierarchyVersionContract> {
+public:
+    HierarchyVersionHandler(const std::string& pluginId, MetadataService& meta)
+        : pluginId_(pluginId), meta_(meta) {}
+
+    std::string_view providerId() const override { return pluginId_; }
+    CapabilityDescriptor describe(const CapabilityQuery&) override {
+        return {.available = true, .priority = 10};
+    }
+
+protected:
+    CapabilityFuture<AssetHierarchyVersionContract::Result>
+    invokeTyped(const AssetHierarchyVersionContract::Request&, CapabilityContext&) override {
+        return CapabilityFuture(AssetHierarchyVersionContract::Result{
+            loadHierarchyGraph(meta_, pluginId_).version
+        });
+    }
+
+private:
+    std::string      pluginId_;
+    MetadataService& meta_;
 };
 
 // builtin.provide_locator:v1
@@ -345,10 +527,8 @@ protected:
         }
 
 #if defined(__APPLE__)
-        // -R selects the file itself in Finder rather than just opening the folder.
         QProcess::startDetached("open", {"-R", QString::fromStdString(path)});
 #elif defined(_WIN32)
-        // explorer /select highlights the file in Explorer.
         QProcess::startDetached("explorer",
             {"/select,", QDir::toNativeSeparators(QString::fromStdString(path))});
 #else
@@ -367,10 +547,8 @@ private:
 // builtin.ui.discover.tab:v1
 class LocalFileDiscoverTabHandler : public TypedCapabilityHandler<DiscoverTabContract> {
 public:
-    LocalFileDiscoverTabHandler(const std::string& pluginId,
-                                AssetService& assets,
-                                MetadataService& meta)
-        : pluginId_(pluginId), assets_(assets), meta_(meta) {}
+    LocalFileDiscoverTabHandler(const std::string& pluginId, AssetService& assets)
+        : pluginId_(pluginId), assets_(assets) {}
 
     std::string_view providerId() const override { return pluginId_; }
     CapabilityDescriptor describe(const CapabilityQuery&) override {
@@ -379,24 +557,24 @@ public:
 
 protected:
     CapabilityFuture<DiscoverTabContract::Result>
-    invokeTyped(const DiscoverTabContract::Request&, CapabilityContext&) override {
-        AssetService*    assets = &assets_;
-        MetadataService* meta   = &meta_;
-        std::string      pid    = pluginId_;
+    invokeTyped(const DiscoverTabContract::Request&, CapabilityContext& ctx) override {
+        std::string       pid    = pluginId_;
+        AssetService*     assets = &assets_;
+        CapabilityBroker* broker = ctx.broker();
 
         return CapabilityFuture(DiscoverTabContract::Result{
             .tabId    = "builtin.local_file.discover",
             .label    = "Local Files",
             .priority = 10,
-            .widgetFactory = [assets, meta, pid](QWidget* parent) -> QWidget* {
-                return buildScanWidget(assets, meta, pid, parent);
+            .widgetFactory = [pid, assets, broker](QWidget* parent) -> QWidget* {
+                return buildScanWidget(pid, assets, broker, parent);
             }
         });
     }
 
 private:
-    static QWidget* buildScanWidget(AssetService* assets, MetadataService* meta,
-                                    const std::string& pid, QWidget* parent) {
+    static QWidget* buildScanWidget(const std::string& pid, AssetService* assets,
+                                    CapabilityBroker* broker, QWidget* parent) {
         auto* widget = new QWidget(parent);
         auto* layout = new QVBoxLayout(widget);
         layout->setContentsMargins(12, 12, 12, 12);
@@ -427,49 +605,35 @@ private:
         });
 
         QObject::connect(scanBtn, &QPushButton::clicked, widget,
-            [assets, meta, pid, pathEdit, status]() {
+            [pid, broker, pathEdit, status]() {
                 QString qpath = pathEdit->text().trimmed();
                 if (qpath.isEmpty()) { status->setText("Enter a folder path first."); return; }
+                if (!broker)         { status->setText("No broker available."); return; }
 
                 status->setText("Scanning\xe2\x80\xa6");
 
-                std::filesystem::path root(qpath.toStdString());
-                std::error_code ec;
-                if (!std::filesystem::is_directory(root, ec)) {
-                    status->setText("Not a valid directory.");
-                    return;
-                }
+                // Route through the capability bus so DiscoveryHandler runs in full
+                // (hierarchy metadata + traverse are handled there).
+                CapabilityRef ref;
+                for (auto& r : broker->findAll<AssetDiscoveryContract>())
+                    if (std::string(r.providerId) == pid) { ref = r; break; }
 
-                int found = 0;
-                for (auto& entry : std::filesystem::recursive_directory_iterator(
-                         root, std::filesystem::directory_options::skip_permission_denied, ec)) {
-                    if (!entry.is_regular_file()) continue;
-                    if (!isSupportedAudio(entry.path())) continue;
+                if (!ref.valid()) { status->setText("Discovery handler not registered."); return; }
 
-                    std::string name  = entry.path().stem().string();
-                    std::string fpath = entry.path().string();
-                    std::string uri   = "file://" + fpath;
-                    if (!assets->findAssetByUri(uri).empty()) continue;
+                AssetDiscoveryContract::Request req;
+                req.sourceType = "local.folder";
+                req.uri        = qpath.toStdString();
 
-                    std::string ext = entry.path().extension().string();
-                    for (auto& c : ext)
-                        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-
-                    std::string assetId = assets->createAsset(name, extensionToKind(ext));
-                    assets->createAssetProvider(assetId, pid, uri);
-                    storeFilePath(*meta, pid, assetId, fpath);
-                    ++found;
-                }
-
-                status->setText(QString("Done. Found %1 new asset(s).").arg(found));
+                auto result = broker->invoke<AssetDiscoveryContract>(ref, req).get();
+                status->setText(
+                    QString("Done. Found %1 new asset(s).").arg(result.assets.size()));
             });
 
         return widget;
     }
 
-    std::string      pluginId_;
-    AssetService&    assets_;
-    MetadataService& meta_;
+    std::string   pluginId_;
+    AssetService& assets_;
 };
 
 // ── LocalFilePlugin ───────────────────────────────────────────────────────────
@@ -489,13 +653,16 @@ void LocalFilePlugin::shutdown() {}
 
 std::vector<std::unique_ptr<IRawCapabilityHandler>> LocalFilePlugin::createCapabilityHandlers() {
     std::vector<std::unique_ptr<IRawCapabilityHandler>> h;
-    h.push_back(std::make_unique<DiscoveryHandler>    (pluginId_, *assets_, *metadata_, *hierarchy_));
-    h.push_back(std::make_unique<LocatorHandler>      (pluginId_, *metadata_));
-    h.push_back(std::make_unique<NameHandler>         (pluginId_, *metadata_));
-    h.push_back(std::make_unique<KindHandler>         (pluginId_, *metadata_));
-    h.push_back(std::make_unique<OpenActionsHandler>         (pluginId_));
-    h.push_back(std::make_unique<ExecuteActionHandler>       (pluginId_, *metadata_));
-    h.push_back(std::make_unique<LocalFileDiscoverTabHandler>(pluginId_, *assets_, *metadata_));
+    h.push_back(std::make_unique<DiscoveryHandler>        (pluginId_, *assets_, *metadata_, *hierarchy_));
+    h.push_back(std::make_unique<HierarchyRootsHandler>   (pluginId_, *metadata_));
+    h.push_back(std::make_unique<HierarchyChildrenHandler>(pluginId_, *metadata_));
+    h.push_back(std::make_unique<HierarchyVersionHandler> (pluginId_, *metadata_));
+    h.push_back(std::make_unique<LocatorHandler>          (pluginId_, *metadata_));
+    h.push_back(std::make_unique<NameHandler>             (pluginId_, *metadata_));
+    h.push_back(std::make_unique<KindHandler>             (pluginId_, *metadata_));
+    h.push_back(std::make_unique<OpenActionsHandler>             (pluginId_));
+    h.push_back(std::make_unique<ExecuteActionHandler>           (pluginId_, *metadata_));
+    h.push_back(std::make_unique<LocalFileDiscoverTabHandler>    (pluginId_, *assets_));
     return h;
 }
 
@@ -528,6 +695,9 @@ QWidget* LocalFilePlugin::createPluginWindow(QWidget* parent) {
     auto* capLayout = new QVBoxLayout(capGroup);
     for (const char* cap : {
             "builtin.asset.discovery:v1",
+            "builtin.asset.hierarchy.roots:v1",
+            "builtin.asset.hierarchy.children:v1",
+            "builtin.asset.hierarchy.version:v1",
             "builtin.provide_locator:v1",
             "builtin.asset.name:v1",
             "builtin.asset.kind:v1",

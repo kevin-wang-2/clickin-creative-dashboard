@@ -37,14 +37,10 @@ protected:
 // ── Migration ─────────────────────────────────────────────────────────────────
 
 TEST_F(DbTest, CoreTablesExistAfterInit) {
-    // schema_migration must have exactly 5 rows
+    // schema_migration must have exactly 1 row (squashed)
     auto stmt = db().prepare("SELECT version FROM schema_migration ORDER BY version;");
     ASSERT_TRUE(stmt.has_value());
     ASSERT_TRUE(stmt->step()); EXPECT_EQ(stmt->columnInt64(0), 1);
-    ASSERT_TRUE(stmt->step()); EXPECT_EQ(stmt->columnInt64(0), 2);
-    ASSERT_TRUE(stmt->step()); EXPECT_EQ(stmt->columnInt64(0), 3);
-    ASSERT_TRUE(stmt->step()); EXPECT_EQ(stmt->columnInt64(0), 4);
-    ASSERT_TRUE(stmt->step()); EXPECT_EQ(stmt->columnInt64(0), 5);
     EXPECT_FALSE(stmt->step());
 }
 
@@ -57,7 +53,7 @@ TEST_F(DbTest, SecondInitSkipsMigration) {
     auto stmt = svc2.db().prepare("SELECT count(*) FROM schema_migration;");
     ASSERT_TRUE(stmt.has_value());
     stmt->step();
-    EXPECT_EQ(stmt->columnInt64(0), 5);  // still only 5 rows, none re-applied
+    EXPECT_EQ(stmt->columnInt64(0), 1);  // still only 1 row, none re-applied
 }
 
 TEST_F(DbTest, PluginMigrationAddedBeforeInit) {
@@ -299,7 +295,8 @@ TEST_F(DbTest, HierarchyCreateNodeAndGetRootNodes) {
     HierarchyService hier(db());
 
     auto assetId = assets.createAsset("root-folder", "folder");
-    auto nodeId  = hier.createNode("plugin.local", assetId);
+    auto nodeId  = hier.upsertNode("plugin.local", assetId, assetId);
+    hier.setNodeAsRoot(nodeId);
 
     EXPECT_FALSE(nodeId.empty());
     auto roots = hier.getRootNodes();
@@ -321,8 +318,9 @@ TEST_F(DbTest, HierarchyAddEdgeAndGetChildNodes) {
 
     auto parentAsset = assets.createAsset("parent", "folder");
     auto childAsset  = assets.createAsset("child",  "audio.wav");
-    auto parentNode  = hier.createNode("plugin.local", parentAsset);
-    auto childNode   = hier.createNode("plugin.local", childAsset);
+    auto parentNode  = hier.upsertNode("plugin.local", parentAsset, parentAsset);
+    auto childNode   = hier.upsertNode("plugin.local", childAsset, childAsset);
+    hier.setNodeAsRoot(parentNode);  // only parent is a declared root
     hier.addEdge(parentNode, childNode);
 
     auto children = hier.getChildNodes(parentNode);
@@ -330,7 +328,7 @@ TEST_F(DbTest, HierarchyAddEdgeAndGetChildNodes) {
     EXPECT_EQ(children[0].nodeId,  childNode);
     EXPECT_EQ(children[0].assetId, childAsset);
 
-    // childNode is not a root (it has a parent).
+    // childNode is not a root (is_root not set).
     auto roots = hier.getRootNodes();
     ASSERT_EQ(roots.size(), 1u);
     EXPECT_EQ(roots[0].nodeId, parentNode);
@@ -342,8 +340,8 @@ TEST_F(DbTest, HierarchyHasChildNodes) {
 
     auto parentAsset = assets.createAsset("parent", "folder");
     auto childAsset  = assets.createAsset("child",  "audio.wav");
-    auto parentNode  = hier.createNode("plugin.local", parentAsset);
-    auto childNode   = hier.createNode("plugin.local", childAsset);
+    auto parentNode  = hier.upsertNode("plugin.local", parentAsset, parentAsset);
+    auto childNode   = hier.upsertNode("plugin.local", childAsset, childAsset);
 
     EXPECT_FALSE(hier.hasChildNodes(parentNode));
     hier.addEdge(parentNode, childNode);
@@ -356,13 +354,15 @@ TEST_F(DbTest, HierarchyRemoveEdge) {
 
     auto a = assets.createAsset("a", "folder");
     auto b = assets.createAsset("b", "audio.wav");
-    auto na = hier.createNode("plugin.local", a);
-    auto nb = hier.createNode("plugin.local", b);
+    auto na = hier.upsertNode("plugin.local", a, a);
+    auto nb = hier.upsertNode("plugin.local", b, b);
+    hier.setNodeAsRoot(na);
+    hier.setNodeAsRoot(nb);
     hier.addEdge(na, nb);
     hier.removeEdge(na, nb);
 
     EXPECT_TRUE(hier.getChildNodes(na).empty());
-    // nb is now a root again (no parent).
+    // Both are declared roots (is_root=1 is independent of edge topology).
     auto roots = hier.getRootNodes();
     EXPECT_EQ(roots.size(), 2u);
 }
@@ -373,8 +373,10 @@ TEST_F(DbTest, HierarchySameAssetMultipleNodes) {
 
     // One asset appearing in two separate positions (e.g. two different plugins).
     auto assetId = assets.createAsset("B", "folder");
-    auto node1   = hier.createNode("plugin.1", assetId);
-    auto node2   = hier.createNode("plugin.2", assetId);
+    auto node1   = hier.upsertNode("plugin.1", assetId, assetId);
+    auto node2   = hier.upsertNode("plugin.2", assetId, assetId);
+    hier.setNodeAsRoot(node1);
+    hier.setNodeAsRoot(node2);
 
     EXPECT_NE(node1, node2);
     auto roots = hier.getRootNodes();
@@ -396,8 +398,9 @@ TEST_F(DbTest, HierarchyRemoveAllByPlugin) {
 
     auto r = assets.createAsset("root",  "folder");
     auto c = assets.createAsset("child", "audio.wav");
-    auto nr = hier.createNode("plugin.local", r);
-    auto nc = hier.createNode("plugin.local", c);
+    auto nr = hier.upsertNode("plugin.local", r, r);
+    auto nc = hier.upsertNode("plugin.local", c, c);
+    hier.setNodeAsRoot(nr);
     hier.addEdge(nr, nc);
 
     hier.removeAllByPlugin("plugin.local");
@@ -412,8 +415,10 @@ TEST_F(DbTest, HierarchyPluginIsolation) {
 
     // Same asset has nodes from two different plugins.
     auto assetId = assets.createAsset("shared", "folder");
-    hier.createNode("plugin.a", assetId);
-    hier.createNode("plugin.b", assetId);
+    auto nodeA = hier.upsertNode("plugin.a", assetId, assetId);
+    auto nodeB = hier.upsertNode("plugin.b", assetId, assetId);
+    hier.setNodeAsRoot(nodeA);
+    hier.setNodeAsRoot(nodeB);
 
     hier.removeAllByPlugin("plugin.a");
 
@@ -430,9 +435,10 @@ TEST_F(DbTest, HierarchyRemoveSubtree) {
     auto ra  = assets.createAsset("root",  "folder");
     auto ca  = assets.createAsset("child", "folder");
     auto gca = assets.createAsset("grand", "audio.wav");
-    auto nr  = hier.createNode("plugin.local", ra);
-    auto nc  = hier.createNode("plugin.local", ca);
-    auto ng  = hier.createNode("plugin.local", gca);
+    auto nr  = hier.upsertNode("plugin.local", ra, ra);
+    auto nc  = hier.upsertNode("plugin.local", ca, ca);
+    auto ng  = hier.upsertNode("plugin.local", gca, gca);
+    hier.setNodeAsRoot(nr);
     hier.addEdge(nr, nc);
     hier.addEdge(nc, ng);
 
@@ -442,4 +448,16 @@ TEST_F(DbTest, HierarchyRemoveSubtree) {
     auto roots = hier.getRootNodes();
     ASSERT_EQ(roots.size(), 1u);
     EXPECT_EQ(roots[0].nodeId, nr);
+}
+
+TEST_F(DbTest, HierarchyUpsertNodePreservesUUID) {
+    AssetService assets(db());
+    HierarchyService hier(db());
+
+    auto assetId = assets.createAsset("track", "audio.wav");
+    auto id1 = hier.upsertNode("plugin.local", "stable-node-id", assetId);
+    auto id2 = hier.upsertNode("plugin.local", "stable-node-id", assetId);
+
+    EXPECT_FALSE(id1.empty());
+    EXPECT_EQ(id1, id2);  // same pluginNodeId → same UUID preserved across re-traversal
 }

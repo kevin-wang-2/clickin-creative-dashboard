@@ -10,8 +10,18 @@ namespace clickin {
 
 class Database;
 
+// Scope conventions for plugin-stored data:
+//   "plugin"        — data owned by the plugin itself (e.g. the plugin's own adjacency list);
+//                     scopeId = pluginId.
+//   "plugin.asset"  — plugin's private data *about* a specific asset (e.g. file path, tags);
+//                     scopeId = assetId. Use this instead of "asset" for all plugin writes
+//                     so that two plugins can store the same namespace for the same asset
+//                     without semantic ambiguity (isolation is already enforced by plugin_id
+//                     in the unique key, but "plugin.asset" makes the ownership explicit).
+//   Core-reserved scope types ("asset", "content_version", "provider_binding") are for
+//   future Core-managed records only; plugins must not use them.
 struct ScopeRef {
-    std::string scope;    // "asset" | "content_version" | "provider_binding"
+    std::string scope;
     std::string scopeId;
 };
 

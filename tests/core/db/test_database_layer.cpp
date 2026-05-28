@@ -36,13 +36,11 @@ protected:
 // ── Migration ─────────────────────────────────────────────────────────────────
 
 TEST_F(DbTest, CoreTablesExistAfterInit) {
-    // schema_migration must have exactly 2 rows (v1 core tables, v2 load_status column)
+    // schema_migration must have exactly 1 row (consolidated baseline schema)
     auto stmt = db().prepare("SELECT version FROM schema_migration ORDER BY version;");
     ASSERT_TRUE(stmt.has_value());
     ASSERT_TRUE(stmt->step());
     EXPECT_EQ(stmt->columnInt64(0), 1);
-    ASSERT_TRUE(stmt->step());
-    EXPECT_EQ(stmt->columnInt64(0), 2);
     EXPECT_FALSE(stmt->step());
 }
 
@@ -55,7 +53,7 @@ TEST_F(DbTest, SecondInitSkipsMigration) {
     auto stmt = svc2.db().prepare("SELECT count(*) FROM schema_migration;");
     ASSERT_TRUE(stmt.has_value());
     stmt->step();
-    EXPECT_EQ(stmt->columnInt64(0), 2);  // still only 2 rows, none re-applied
+    EXPECT_EQ(stmt->columnInt64(0), 1);  // still only 1 row, none re-applied
 }
 
 TEST_F(DbTest, PluginMigrationAddedBeforeInit) {

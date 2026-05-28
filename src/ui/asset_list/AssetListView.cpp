@@ -9,6 +9,7 @@
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
 #include "sdk/contracts/builtin/AssetRef.h"
 #include "sdk/contracts/builtin/AssetSearchContract.h"
+#include "sdk/contracts/ui/AssetPreviewWidgetContract.h"
 #include <QPointer>
 
 #include <QAbstractTableModel>
@@ -322,14 +323,21 @@ void AssetListView::onContextMenuRequested(const QPoint& pos) {
     QString assetId = impl_->model->assetIdAt(idx.row());
     bool isFolder   = (impl_->model->kindAt(idx.row()) == "folder");
 
+    auto ctx = impl_->app.coreContext();
+
+    // Ask the capability bus whether any plugin can preview this asset.
+    clickin::CapabilityQuery previewQuery;
+    previewQuery.assetId = assetId.toStdString();
+    auto previewRef = ctx.capabilities.findBest<clickin::AssetPreviewWidgetContract>(previewQuery);
+
     QMenu menu(this);
 
-    // Folders: navigate; non-folders: preview.
-    QAction* previewAct = nullptr;
+    QAction* previewAct    = nullptr;
     QAction* openFolderAct = nullptr;
     if (isFolder) {
         openFolderAct = menu.addAction("Open");
-    } else {
+    }
+    if (previewRef.valid()) {
         previewAct = menu.addAction("Preview");
         previewAct->setShortcut(Qt::Key_Space);
     }
@@ -338,7 +346,6 @@ void AssetListView::onContextMenuRequested(const QPoint& pos) {
     QAction* detailsAct = menu.addAction("Show Details");
 
     // Open actions from AssetOpenActionsContract
-    auto ctx = impl_->app.coreContext();
     clickin::AssetRef ref{assetId.toStdString(), ""};
     auto actRef = ctx.capabilities.findBest<clickin::AssetOpenActionsContract>(
         clickin::CapabilityQuery{});

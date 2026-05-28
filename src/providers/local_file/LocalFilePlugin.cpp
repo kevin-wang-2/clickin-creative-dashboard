@@ -9,6 +9,11 @@
 #include "sdk/contracts/builtin/AssetKindContract.h"
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
 
+#include <QGroupBox>
+#include <QLabel>
+#include <QVBoxLayout>
+#include <QWidget>
+
 #include <filesystem>
 #include <set>
 #include <string>
@@ -285,6 +290,49 @@ std::vector<std::unique_ptr<IRawCapabilityHandler>> LocalFilePlugin::createCapab
     h.push_back(std::make_unique<OpenActionsHandler>  (pluginId_));
     h.push_back(std::make_unique<ExecuteActionHandler>(pluginId_, *metadata_));
     return h;
+}
+
+QWidget* LocalFilePlugin::createPluginWindow(QWidget* parent) {
+    auto* win = new QWidget(parent, Qt::Window);
+    win->setWindowTitle("Local File Plugin");
+    win->setMinimumWidth(340);
+
+    auto* layout = new QVBoxLayout(win);
+    layout->setSpacing(8);
+
+    auto addLabel = [&](const QString& text, bool bold = false) {
+        auto* lbl = new QLabel(text, win);
+        lbl->setWordWrap(true);
+        if (bold) {
+            QFont f = lbl->font();
+            f.setBold(true);
+            lbl->setFont(f);
+        }
+        layout->addWidget(lbl);
+    };
+
+    addLabel("Local File Plugin", true);
+    addLabel(QString("Version: %1").arg(QString::fromStdString(manifest().version)));
+    addLabel(QString("Plugin ID: %1").arg(QString::fromStdString(pluginId_)));
+
+    layout->addSpacing(8);
+
+    auto* capGroup = new QGroupBox("Registered Capabilities", win);
+    auto* capLayout = new QVBoxLayout(capGroup);
+    for (const char* cap : {
+            "builtin.asset.discovery:v1",
+            "builtin.provide_locator:v1",
+            "builtin.asset.name:v1",
+            "builtin.asset.kind:v1",
+            "builtin.asset.open_actions:v1",
+            "builtin.asset.execute_action:v1"
+         }) {
+        capLayout->addWidget(new QLabel(QString("• ") + cap, capGroup));
+    }
+    layout->addWidget(capGroup);
+    layout->addStretch();
+
+    return win;
 }
 
 } // namespace clickin

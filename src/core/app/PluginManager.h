@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+class QWidget;
+
 namespace clickin {
 
 class CapabilityRegistry;
@@ -30,12 +32,21 @@ public:
     // Call shutdown() on all active plugins in reverse activation order.
     void shutdownAll();
 
+    // Open (or return existing) plugin window for the given plugin ID.
+    // Returns nullptr if the plugin has no window or is not active.
+    QWidget* createPluginWindow(const std::string& pluginId, QWidget* parent) const;
+
+    // IDs of active plugins whose manifest has autoStartWindow = true.
+    std::vector<std::string> autoStartWindowPluginIds() const;
+
     struct PluginState {
         std::string              pluginId;
         std::string              name;
         std::string              version;
-        bool                     critical      = false;
-        bool                     builtin       = true;
+        bool                     critical        = false;
+        bool                     builtin         = true;
+        bool                     autoStartWindow = false;
+        bool                     hasWindow       = false;
         std::string              loadStatus;   // active | failed | disabled
         std::string              failReason;
         std::vector<std::string> dependencies; // from manifest

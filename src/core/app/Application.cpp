@@ -78,6 +78,16 @@ std::vector<PluginManager::PluginState> Application::pluginStates() const {
     return impl_->plugins->states();
 }
 
+QWidget* Application::createPluginWindowFor(const std::string& pluginId, QWidget* parent) {
+    if (!impl_->plugins) return nullptr;
+    return impl_->plugins->createPluginWindow(pluginId, parent);
+}
+
+std::vector<std::string> Application::autoStartWindowPluginIds() const {
+    if (!impl_->plugins) return {};
+    return impl_->plugins->autoStartWindowPluginIds();
+}
+
 CoreContext Application::coreContext() {
     return CoreContext{
         *impl_->dbService,

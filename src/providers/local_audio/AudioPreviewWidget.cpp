@@ -2,7 +2,7 @@
 #include "core/capability/CapabilityBroker.h"
 #include "sdk/contracts/builtin/AssetRef.h"
 #include "sdk/contracts/builtin/AssetLocatorContract.h"
-#include "sdk/contracts/media/AudioWaveformContract.h"
+#include "providers/audio/contracts/AudioWaveformContract.h"
 
 #include <QAudioOutput>
 #include <QHBoxLayout>

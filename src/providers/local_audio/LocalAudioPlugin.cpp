@@ -5,9 +5,9 @@
 #include "core/services/MetadataService.h"
 #include "core/services/CacheService.h"
 #include "sdk/TypedCapabilityHandler.h"
-#include "sdk/contracts/media/AudioMetadataContract.h"
-#include "sdk/contracts/media/AudioWaveformContract.h"
-#include "sdk/contracts/media/AudioPreviewContract.h"
+#include "providers/audio/contracts/AudioMetadataContract.h"
+#include "providers/audio/contracts/AudioWaveformContract.h"
+#include "providers/audio/contracts/AudioPreviewContract.h"
 #include "sdk/contracts/builtin/AssetLocatorContract.h"
 #include "sdk/contracts/ui/AssetPreviewWidgetContract.h"
 

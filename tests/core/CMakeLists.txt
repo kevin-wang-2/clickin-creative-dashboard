@@ -1,5 +1,6 @@
 add_executable(test_core
     capability/test_capability_broker.cpp
+    capability/test_capability_future.cpp
     db/test_database_layer.cpp
     app/test_plugin_lifecycle.cpp
 )

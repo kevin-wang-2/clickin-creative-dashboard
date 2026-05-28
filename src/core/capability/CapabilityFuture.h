@@ -22,7 +22,8 @@ struct FutureState {
     mutable std::condition_variable cv;
     std::optional<T>                value;
     std::exception_ptr              exception;
-    std::vector<std::function<void(const T&)>> callbacks;
+    std::vector<std::function<void(const T&)>>          callbacks;
+    std::vector<std::function<void(std::exception_ptr)>> errCallbacks;
 
     // Resolve with a value. Idempotent: further calls are silently ignored.
     void resolve(T v) {
@@ -32,20 +33,24 @@ struct FutureState {
             if (value || exception) return;
             value = std::move(v);
             cbs   = std::move(callbacks);
+            errCallbacks.clear();
         }
         cv.notify_all();
         for (auto& cb : cbs) cb(*value);
     }
 
-    // Settle with an exception. Registered callbacks are NOT called (V1 limitation;
-    // callers must use .get() to observe the error).
+    // Settle with an exception. Propagates to any chained then() continuations.
     void fail(std::exception_ptr ep) {
+        std::vector<std::function<void(std::exception_ptr)>> ecbs;
         {
             std::lock_guard lock(mu);
             if (value || exception) return;
             exception = std::move(ep);
+            ecbs      = std::move(errCallbacks);
+            callbacks.clear();
         }
         cv.notify_all();
+        for (auto& cb : ecbs) cb(exception);
     }
 
     bool isReady() const noexcept {
@@ -61,16 +66,34 @@ struct FutureState {
         return *value;
     }
 
-    // Register a value callback. If already resolved, fires inline (outside the lock).
-    // If settled with an exception, the callback is silently dropped.
-    void addCallback(std::function<void(const T&)> cb) {
-        const T* vp = nullptr;
+    // Block until resolved or until `dur` elapses. Returns true if resolved.
+    template<typename Rep, typename Period>
+    bool waitFor(std::chrono::duration<Rep, Period> dur) const {
+        std::unique_lock lock(mu);
+        return cv.wait_for(lock, dur,
+            [this] { return value.has_value() || exception != nullptr; });
+    }
+
+    // Register callbacks for both success and failure.
+    //   onVal  — called (outside lock) if/when the future resolves with a value.
+    //   onErr  — called (outside lock) if/when the future fails; may be empty.
+    // If already settled, the appropriate callback fires inline.
+    void addCallback(std::function<void(const T&)>          onVal,
+                     std::function<void(std::exception_ptr)> onErr = {}) {
+        const T*           vp = nullptr;
+        std::exception_ptr ep;
         {
             std::lock_guard lock(mu);
-            if (value)         vp = &(*value);
-            else if (!exception) callbacks.push_back(std::move(cb));
+            if (value)          vp = &(*value);
+            else if (exception) ep = exception;
+            else {
+                callbacks.push_back(std::move(onVal));
+                if (onErr) errCallbacks.push_back(std::move(onErr));
+                return;
+            }
         }
-        if (vp) cb(*vp);
+        if (vp)             onVal(*vp);
+        else if (ep && onErr) onErr(ep);
     }
 };
 
@@ -81,7 +104,9 @@ struct FutureState {
 // A single-assignment future that supports:
 //   • Synchronous eager resolution: CapabilityFuture<T>(value)
 //   • Blocking get():               future.get()          — safe on worker threads
-//   • Non-blocking then():          future.then(fn)       — fires on resolving thread
+//   • Timed wait:                   future.waitFor(dur)   — returns bool (for tests)
+//   • Non-blocking then():          future.then(fn)       — fires on resolving thread;
+//                                                           exceptions propagate
 //   • Void callback onReady():      future.onReady(fn)    — fires on resolving thread
 //   • C++20 co_await:              co_await future        — resumes on resolving thread
 //   • Coroutine return type:        co_return T            — requires promise_type below
@@ -115,8 +140,17 @@ public:
     // ── Blocking get — safe on worker threads; forbidden on UI thread ────────
     const T& get() const { return state_->wait(); }
 
+    // ── Timed wait — returns true if resolved/failed within dur; does not throw ─
+    // Use in tests: ASSERT_TRUE(future.waitFor(5s)) << "timed out";
+    template<typename Rep, typename Period>
+    bool waitFor(std::chrono::duration<Rep, Period> dur) const {
+        return state_->waitFor(dur);
+    }
+
     // ── Non-blocking then — fn(const T&) -> R; returns CapabilityFuture<R> ──
     // The continuation fires on the thread that resolves this future.
+    // Exceptions thrown by fn — or exceptions from a failed source future —
+    // propagate into the returned future and surface through its .get().
     // Fn must return a non-void type; for void side-effects use onReady().
     template <typename Fn>
     auto then(Fn&& fn) -> CapabilityFuture<std::invoke_result_t<Fn, const T&>> {
@@ -124,15 +158,19 @@ public:
         auto next  = CapabilityFuture<R>::makeUnresolved();
         auto ns    = next.state_;
         auto fn_cp = std::forward<Fn>(fn);
-        state_->addCallback([fn_cp, ns](const T& v) mutable {
-            try { ns->resolve(fn_cp(v)); }
-            catch (...) { ns->fail(std::current_exception()); }
-        });
+        state_->addCallback(
+            [fn_cp, ns](const T& v) mutable {
+                try { ns->resolve(fn_cp(v)); }
+                catch (...) { ns->fail(std::current_exception()); }
+            },
+            [ns](std::exception_ptr ep) mutable { ns->fail(std::move(ep)); }
+        );
         return next;
     }
 
     // ── Void callback — fires on resolving thread, no new future ─────────────
     // Used internally by the broker to forward results without creating an extra future.
+    // onReady does NOT propagate failures — use then() when chaining is required.
     template <typename Fn>
     void onReady(Fn&& fn) {
         static_assert(std::is_invocable_v<Fn, const T&>);
@@ -143,9 +181,12 @@ public:
     bool await_ready() const noexcept { return state_->isReady(); }
 
     void await_suspend(std::coroutine_handle<> h) const {
-        // If already resolved when await_suspend is called (window between await_ready
-        // and await_suspend), addCallback fires h.resume() inline — valid in C++20.
-        state_->addCallback([h](const T&) mutable { h.resume(); });
+        // Resume the coroutine whether the future resolves or fails; await_resume
+        // calls wait() which rethrows any stored exception.
+        state_->addCallback(
+            [h](const T&) mutable          { h.resume(); },
+            [h](std::exception_ptr) mutable { h.resume(); }
+        );
     }
 
     T await_resume() const { return state_->wait(); }

@@ -15,9 +15,11 @@ public:
 
 private slots:
     void showAssetDetails(const QString& assetId);
+    void openDiscoverManager();
 
 private:
     void buildMenuBar();
+    void populatePluginMenuItems();
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

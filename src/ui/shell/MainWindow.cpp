@@ -1,13 +1,19 @@
 #include "ui/shell/MainWindow.h"
 #include "ui/asset_list/AssetListView.h"
+#include "ui/discover/DiscoverManagerDialog.h"
 #include "ui/plugin_mgmt/PluginManagementView.h"
 #include "ui/inspector/InspectorPanel.h"
 #include "ui/preview_host/PreviewHost.h"
 #include "ui/job_status/JobStatusBar.h"
 #include "core/app/Application.h"
+#include "core/app/CoreContext.h"
+#include "sdk/contracts/builtin/MenuBarItemsContract.h"
 
 #include <QDialog>
+#include <QKeySequence>
+#include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTabWidget>
@@ -16,15 +22,16 @@
 struct MainWindow::Impl {
     clickin::Application& app;
 
-    AssetListView*        assetList  = nullptr;
-    PreviewHost*          preview    = nullptr;
-    PluginManagementView* pluginMgmt = nullptr;
-    JobStatusBar*         jobStatus  = nullptr;
-    QTabWidget*           tabs       = nullptr;
+    AssetListView*        assetList      = nullptr;
+    PreviewHost*          preview        = nullptr;
+    PluginManagementView* pluginMgmt     = nullptr;
+    JobStatusBar*         jobStatus      = nullptr;
+    QTabWidget*           tabs           = nullptr;
 
-    // Inspector lives in a modeless dialog — created on first use.
-    QDialog*        detailDialog = nullptr;
-    InspectorPanel* inspector    = nullptr;
+    // Modeless dialogs — created on first use.
+    QDialog*               detailDialog   = nullptr;
+    InspectorPanel*        inspector      = nullptr;
+    DiscoverManagerDialog* discoverDialog = nullptr;
 
     explicit Impl(clickin::Application& a) : app(a) {}
 };
@@ -66,6 +73,7 @@ MainWindow::MainWindow(clickin::Application& app, QWidget* parent)
 
     // ── Menu bar ──────────────────────────────────────────────────────────────
     buildMenuBar();
+    populatePluginMenuItems();
 
     // ── Connections ───────────────────────────────────────────────────────────
     connect(impl_->assetList, &AssetListView::previewRequested,
@@ -79,9 +87,9 @@ MainWindow::~MainWindow() = default;
 void MainWindow::buildMenuBar() {
     QMenu* discoveryMenu = menuBar()->addMenu("Discovery");
 
-    QAction* scanAct = discoveryMenu->addAction("Scan Folder\xe2\x80\xa6");
-    scanAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
-    connect(scanAct, &QAction::triggered, impl_->assetList, &AssetListView::onScanFolder);
+    QAction* discoverAct = discoveryMenu->addAction("Discover Manager\xe2\x80\xa6");
+    discoverAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    connect(discoverAct, &QAction::triggered, this, &MainWindow::openDiscoverManager);
 
     QAction* refreshAct = discoveryMenu->addAction("Refresh");
     refreshAct->setShortcut(QKeySequence::Refresh);
@@ -92,6 +100,56 @@ void MainWindow::buildMenuBar() {
     connect(showPluginsAct, &QAction::triggered, this, [this]() {
         impl_->tabs->setCurrentWidget(impl_->pluginMgmt);
     });
+}
+
+void MainWindow::openDiscoverManager() {
+    if (!impl_->discoverDialog) {
+        impl_->discoverDialog = new DiscoverManagerDialog(impl_->app, this);
+        // Refresh asset list when the user closes the discover dialog.
+        connect(impl_->discoverDialog, &QDialog::finished,
+                impl_->assetList, &AssetListView::refresh);
+    }
+    impl_->discoverDialog->show();
+    impl_->discoverDialog->raise();
+    impl_->discoverDialog->activateWindow();
+}
+
+void MainWindow::populatePluginMenuItems() {
+    auto ctx  = impl_->app.coreContext();
+    auto refs = ctx.capabilities.findAll<clickin::MenuBarItemsContract>();
+
+    for (const auto& ref : refs) {
+        auto result = ctx.capabilities
+            .invoke<clickin::MenuBarItemsContract>(ref, clickin::MenuBarItemsContract::Request{})
+            .get();
+
+        for (const auto& item : result.items) {
+            QString menuName = QString::fromStdString(item.menuName);
+            QMenu* targetMenu = nullptr;
+            for (QAction* a : menuBar()->actions()) {
+                if (a->menu() && a->text() == menuName) {
+                    targetMenu = a->menu();
+                    break;
+                }
+            }
+            if (!targetMenu)
+                targetMenu = menuBar()->addMenu(menuName);
+
+            QAction* act = targetMenu->addAction(QString::fromStdString(item.label));
+            if (!item.shortcut.empty())
+                act->setShortcut(QKeySequence(QString::fromStdString(item.shortcut)));
+
+            auto callback = item.action;
+            connect(act, &QAction::triggered, this, [this, callback]() {
+                if (!callback) {
+                    QMessageBox::warning(this, "Plugin Error",
+                                         "Action has no handler registered.");
+                    return;
+                }
+                callback();
+            });
+        }
+    }
 }
 
 void MainWindow::showAssetDetails(const QString& assetId) {

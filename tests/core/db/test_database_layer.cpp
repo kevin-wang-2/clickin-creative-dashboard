@@ -37,17 +37,14 @@ protected:
 // ── Migration ─────────────────────────────────────────────────────────────────
 
 TEST_F(DbTest, CoreTablesExistAfterInit) {
-    // schema_migration must have exactly 4 rows (v1 baseline, v2 uri index, v3 kind, v4 hierarchy)
+    // schema_migration must have exactly 5 rows
     auto stmt = db().prepare("SELECT version FROM schema_migration ORDER BY version;");
     ASSERT_TRUE(stmt.has_value());
-    ASSERT_TRUE(stmt->step());
-    EXPECT_EQ(stmt->columnInt64(0), 1);
-    ASSERT_TRUE(stmt->step());
-    EXPECT_EQ(stmt->columnInt64(0), 2);
-    ASSERT_TRUE(stmt->step());
-    EXPECT_EQ(stmt->columnInt64(0), 3);
-    ASSERT_TRUE(stmt->step());
-    EXPECT_EQ(stmt->columnInt64(0), 4);
+    ASSERT_TRUE(stmt->step()); EXPECT_EQ(stmt->columnInt64(0), 1);
+    ASSERT_TRUE(stmt->step()); EXPECT_EQ(stmt->columnInt64(0), 2);
+    ASSERT_TRUE(stmt->step()); EXPECT_EQ(stmt->columnInt64(0), 3);
+    ASSERT_TRUE(stmt->step()); EXPECT_EQ(stmt->columnInt64(0), 4);
+    ASSERT_TRUE(stmt->step()); EXPECT_EQ(stmt->columnInt64(0), 5);
     EXPECT_FALSE(stmt->step());
 }
 
@@ -60,7 +57,7 @@ TEST_F(DbTest, SecondInitSkipsMigration) {
     auto stmt = svc2.db().prepare("SELECT count(*) FROM schema_migration;");
     ASSERT_TRUE(stmt.has_value());
     stmt->step();
-    EXPECT_EQ(stmt->columnInt64(0), 4);  // still only 4 rows, none re-applied
+    EXPECT_EQ(stmt->columnInt64(0), 5);  // still only 5 rows, none re-applied
 }
 
 TEST_F(DbTest, PluginMigrationAddedBeforeInit) {
@@ -297,117 +294,152 @@ TEST_F(DbTest, SettingsOverwrite) {
 
 // ── HierarchyService ──────────────────────────────────────────────────────────
 
-TEST_F(DbTest, HierarchyMarkNodeAndGetNodes) {
+TEST_F(DbTest, HierarchyCreateNodeAndGetRootNodes) {
     AssetService assets(db());
     HierarchyService hier(db());
 
-    auto id = assets.createAsset("root-folder", "folder");
-    hier.markNode("plugin.local", id);
+    auto assetId = assets.createAsset("root-folder", "folder");
+    auto nodeId  = hier.createNode("plugin.local", assetId);
 
-    auto nodes = hier.getNodes("plugin.local");
-    ASSERT_EQ(nodes.size(), 1u);
-    EXPECT_EQ(nodes[0].id, id);
-    EXPECT_EQ(nodes[0].name, "root-folder");
+    EXPECT_FALSE(nodeId.empty());
+    auto roots = hier.getRootNodes();
+    ASSERT_EQ(roots.size(), 1u);
+    EXPECT_EQ(roots[0].nodeId,  nodeId);
+    EXPECT_EQ(roots[0].assetId, assetId);
+    EXPECT_EQ(roots[0].name,    "root-folder");
+    EXPECT_EQ(roots[0].pluginId, "plugin.local");
 }
 
-TEST_F(DbTest, HierarchyGetNodesEmptyWithoutMark) {
+TEST_F(DbTest, HierarchyGetRootNodesEmptyWithoutNodes) {
     HierarchyService hier(db());
-    EXPECT_TRUE(hier.getNodes("plugin.local").empty());
+    EXPECT_TRUE(hier.getRootNodes().empty());
 }
 
-TEST_F(DbTest, HierarchyAddParentAndGetChildren) {
+TEST_F(DbTest, HierarchyAddEdgeAndGetChildNodes) {
     AssetService assets(db());
     HierarchyService hier(db());
 
-    auto parentId = assets.createAsset("parent", "folder");
-    auto childId  = assets.createAsset("child", "audio.wav");
-    hier.markNode("plugin.local", parentId);
-    hier.addParent("plugin.local", parentId, childId);
+    auto parentAsset = assets.createAsset("parent", "folder");
+    auto childAsset  = assets.createAsset("child",  "audio.wav");
+    auto parentNode  = hier.createNode("plugin.local", parentAsset);
+    auto childNode   = hier.createNode("plugin.local", childAsset);
+    hier.addEdge(parentNode, childNode);
 
-    auto children = hier.getChildren("plugin.local", parentId);
+    auto children = hier.getChildNodes(parentNode);
     ASSERT_EQ(children.size(), 1u);
-    EXPECT_EQ(children[0].id, childId);
+    EXPECT_EQ(children[0].nodeId,  childNode);
+    EXPECT_EQ(children[0].assetId, childAsset);
+
+    // childNode is not a root (it has a parent).
+    auto roots = hier.getRootNodes();
+    ASSERT_EQ(roots.size(), 1u);
+    EXPECT_EQ(roots[0].nodeId, parentNode);
 }
 
-TEST_F(DbTest, HierarchyHasChildren) {
+TEST_F(DbTest, HierarchyHasChildNodes) {
     AssetService assets(db());
     HierarchyService hier(db());
 
-    auto parentId = assets.createAsset("parent", "folder");
-    auto childId  = assets.createAsset("child", "audio.wav");
+    auto parentAsset = assets.createAsset("parent", "folder");
+    auto childAsset  = assets.createAsset("child",  "audio.wav");
+    auto parentNode  = hier.createNode("plugin.local", parentAsset);
+    auto childNode   = hier.createNode("plugin.local", childAsset);
 
-    EXPECT_FALSE(hier.hasChildren("plugin.local", parentId));
-    hier.addParent("plugin.local", parentId, childId);
-    EXPECT_TRUE(hier.hasChildren("plugin.local", parentId));
+    EXPECT_FALSE(hier.hasChildNodes(parentNode));
+    hier.addEdge(parentNode, childNode);
+    EXPECT_TRUE(hier.hasChildNodes(parentNode));
 }
 
-TEST_F(DbTest, HierarchyUnmarkNode) {
+TEST_F(DbTest, HierarchyRemoveEdge) {
     AssetService assets(db());
     HierarchyService hier(db());
 
-    auto id = assets.createAsset("folder", "folder");
-    hier.markNode("plugin.local", id);
-    hier.unmarkNode("plugin.local", id);
+    auto a = assets.createAsset("a", "folder");
+    auto b = assets.createAsset("b", "audio.wav");
+    auto na = hier.createNode("plugin.local", a);
+    auto nb = hier.createNode("plugin.local", b);
+    hier.addEdge(na, nb);
+    hier.removeEdge(na, nb);
 
-    EXPECT_TRUE(hier.getNodes("plugin.local").empty());
+    EXPECT_TRUE(hier.getChildNodes(na).empty());
+    // nb is now a root again (no parent).
+    auto roots = hier.getRootNodes();
+    EXPECT_EQ(roots.size(), 2u);
 }
 
-TEST_F(DbTest, HierarchyRemoveParent) {
+TEST_F(DbTest, HierarchySameAssetMultipleNodes) {
     AssetService assets(db());
     HierarchyService hier(db());
 
-    auto parentId = assets.createAsset("parent", "folder");
-    auto childId  = assets.createAsset("child", "audio.wav");
-    hier.addParent("plugin.local", parentId, childId);
-    hier.removeParent("plugin.local", parentId, childId);
+    // One asset appearing in two separate positions (e.g. two different plugins).
+    auto assetId = assets.createAsset("B", "folder");
+    auto node1   = hier.createNode("plugin.1", assetId);
+    auto node2   = hier.createNode("plugin.2", assetId);
 
-    EXPECT_TRUE(hier.getChildren("plugin.local", parentId).empty());
+    EXPECT_NE(node1, node2);
+    auto roots = hier.getRootNodes();
+    ASSERT_EQ(roots.size(), 2u);
+
+    // Each node tracks its own plugin.
+    bool found1 = false, found2 = false;
+    for (const auto& r : roots) {
+        if (r.nodeId == node1) { EXPECT_EQ(r.pluginId, "plugin.1"); found1 = true; }
+        if (r.nodeId == node2) { EXPECT_EQ(r.pluginId, "plugin.2"); found2 = true; }
+    }
+    EXPECT_TRUE(found1);
+    EXPECT_TRUE(found2);
 }
 
 TEST_F(DbTest, HierarchyRemoveAllByPlugin) {
     AssetService assets(db());
     HierarchyService hier(db());
 
-    auto rootId  = assets.createAsset("root", "folder");
-    auto childId = assets.createAsset("child", "folder");
-    auto leafId  = assets.createAsset("leaf", "audio.wav");
-    hier.markNode("plugin.local", rootId);
-    hier.addParent("plugin.local", rootId, childId);
-    hier.addParent("plugin.local", childId, leafId);
+    auto r = assets.createAsset("root",  "folder");
+    auto c = assets.createAsset("child", "audio.wav");
+    auto nr = hier.createNode("plugin.local", r);
+    auto nc = hier.createNode("plugin.local", c);
+    hier.addEdge(nr, nc);
 
-    hier.removeAllByPlugin("plugin.local", rootId);
+    hier.removeAllByPlugin("plugin.local");
 
-    EXPECT_TRUE(hier.getNodes("plugin.local").empty());
-    EXPECT_TRUE(hier.getChildren("plugin.local", rootId).empty());
-    EXPECT_TRUE(hier.getChildren("plugin.local", childId).empty());
-}
-
-TEST_F(DbTest, HierarchyRemoveAllByPluginNoRoot) {
-    AssetService assets(db());
-    HierarchyService hier(db());
-
-    auto r1 = assets.createAsset("r1", "folder");
-    auto r2 = assets.createAsset("r2", "folder");
-    hier.markNode("plugin.a", r1);
-    hier.markNode("plugin.a", r2);
-
-    hier.removeAllByPlugin("plugin.a");
-
-    EXPECT_TRUE(hier.getNodes("plugin.a").empty());
+    EXPECT_TRUE(hier.getRootNodes().empty());
+    EXPECT_TRUE(hier.getChildNodes(nr).empty());
 }
 
 TEST_F(DbTest, HierarchyPluginIsolation) {
     AssetService assets(db());
     HierarchyService hier(db());
 
-    auto id = assets.createAsset("shared", "folder");
-    hier.markNode("plugin.a", id);
-    hier.markNode("plugin.b", id);
+    // Same asset has nodes from two different plugins.
+    auto assetId = assets.createAsset("shared", "folder");
+    hier.createNode("plugin.a", assetId);
+    hier.createNode("plugin.b", assetId);
 
     hier.removeAllByPlugin("plugin.a");
 
-    // plugin.b's node must still be intact
-    auto nodes = hier.getNodes("plugin.b");
-    ASSERT_EQ(nodes.size(), 1u);
-    EXPECT_EQ(nodes[0].id, id);
+    // plugin.b's node must survive.
+    auto roots = hier.getRootNodes();
+    ASSERT_EQ(roots.size(), 1u);
+    EXPECT_EQ(roots[0].pluginId, "plugin.b");
+}
+
+TEST_F(DbTest, HierarchyRemoveSubtree) {
+    AssetService assets(db());
+    HierarchyService hier(db());
+
+    auto ra  = assets.createAsset("root",  "folder");
+    auto ca  = assets.createAsset("child", "folder");
+    auto gca = assets.createAsset("grand", "audio.wav");
+    auto nr  = hier.createNode("plugin.local", ra);
+    auto nc  = hier.createNode("plugin.local", ca);
+    auto ng  = hier.createNode("plugin.local", gca);
+    hier.addEdge(nr, nc);
+    hier.addEdge(nc, ng);
+
+    hier.removeSubtree(nc);  // remove child and grandchild, keep root
+
+    EXPECT_TRUE(hier.getChildNodes(nr).empty());
+    auto roots = hier.getRootNodes();
+    ASSERT_EQ(roots.size(), 1u);
+    EXPECT_EQ(roots[0].nodeId, nr);
 }

@@ -30,7 +30,7 @@ private slots:
     void onBreadcrumbClicked(int depth);  // navigate back to given depth (0 = root)
 
 private:
-    void navigateInto(const QString& assetId, const QString& name);
+    void navigateInto(const QString& nodeId, const QString& assetId, const QString& name);
     void navigateTo(int depth);           // pop nav stack to given depth
     void loadCurrentLevel();
     void rebuildBreadcrumb();

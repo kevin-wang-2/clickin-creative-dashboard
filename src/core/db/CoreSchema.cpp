@@ -122,6 +122,26 @@ CREATE TABLE asset_parents (
     PRIMARY KEY (plugin_id, parent_id, child_id)
 );
 )sql"
+    },
+    {
+        .version     = 5,
+        .description = "Hierarchy refactor: node-node forest model replaces asset-asset edges",
+        .sql         = R"sql(
+DROP TABLE asset_parents;
+DROP TABLE asset_nodes;
+
+CREATE TABLE hierarchy_nodes (
+    node_id   TEXT NOT NULL PRIMARY KEY,
+    plugin_id TEXT NOT NULL,
+    asset_id  TEXT NOT NULL
+);
+
+CREATE TABLE hierarchy_edges (
+    parent_node_id TEXT NOT NULL,
+    child_node_id  TEXT NOT NULL,
+    PRIMARY KEY (parent_node_id, child_node_id)
+);
+)sql"
     }};
 }
 

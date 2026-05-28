@@ -13,6 +13,7 @@ using AssetId = std::string;
 struct AssetRecord {
     AssetId     id;
     std::string name;
+    std::string kind;     // e.g. "audio.wav", "audio.mp3", "" if unknown
     std::string status;   // active | missing | deleted
 };
 
@@ -29,7 +30,9 @@ public:
 
     std::vector<AssetRecord> listAssets() const;
     AssetRecord              getAsset(const AssetId& id) const;
-    AssetId                  createAsset(const std::string& name);
+    AssetId                  createAsset(const std::string& name,
+                                         const std::string& kind = {});
+    void                     setAssetKind(const AssetId& id, const std::string& kind);
     void                     deleteAsset(const AssetId& id);
 
     // Returns the asset ID that owns the given URI, or empty string if none.

@@ -39,13 +39,14 @@ public:
     int rowCount(const QModelIndex& = {}) const override {
         return static_cast<int>(assets_.size());
     }
-    int columnCount(const QModelIndex& = {}) const override { return 2; }
+    int columnCount(const QModelIndex& = {}) const override { return 3; }
 
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override {
         if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
         switch (section) {
             case 0: return "Name";
-            case 1: return "Status";
+            case 1: return "Type";
+            case 2: return "Status";
         }
         return {};
     }
@@ -55,7 +56,8 @@ public:
         const auto& a = assets_[index.row()];
         switch (index.column()) {
             case 0: return QString::fromStdString(a.name);
-            case 1: return QString::fromStdString(a.status);
+            case 1: return a.kind.empty() ? QString("—") : QString::fromStdString(a.kind);
+            case 2: return QString::fromStdString(a.status);
         }
         return {};
     }
@@ -91,6 +93,7 @@ AssetListView::AssetListView(clickin::Application& app, QWidget* parent)
     impl_->table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     impl_->table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     impl_->table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    impl_->table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     impl_->table->verticalHeader()->hide();
     impl_->table->setContextMenuPolicy(Qt::CustomContextMenu);
 

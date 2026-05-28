@@ -539,11 +539,14 @@ protected:
         std::string assetId = req.assetId;
         CapabilityBroker* brokerPtr = &broker_;
 
-        AssetPreviewWidgetContract::Result result;
-        result.hasPreview = true;
-        result.factory    = [assetId, brokerPtr](QWidget* parent) -> QWidget* {
+        auto factory = [assetId, brokerPtr](QWidget* parent) -> QWidget* {
             return new AudioPreviewWidget(assetId, brokerPtr, parent);
         };
+        AssetPreviewWidgetContract::Result result;
+        result.supportsEmbedded = true;
+        result.supportsWindow   = true;
+        result.embeddedFactory  = factory;
+        result.windowFactory    = factory;
         return CapabilityFuture(std::move(result));
     }
 

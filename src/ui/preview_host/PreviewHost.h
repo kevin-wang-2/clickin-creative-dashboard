@@ -13,6 +13,9 @@ public:
 public slots:
     void onAssetSelected(const QString& assetId);
 
+private slots:
+    void onPopOut();
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

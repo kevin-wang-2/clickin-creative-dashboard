@@ -21,11 +21,20 @@ public:
     CapabilityRef findBest(std::string_view capability, int version,
                            const CapabilityQuery& query) const;
 
+    // Find *all* available and enabled handlers for a capability.
+    std::vector<CapabilityRef> findAll(std::string_view capability, int version,
+                                       const CapabilityQuery& query = {}) const;
+
     // ── Typed wrappers (header-only, thin shell) ──────────────────────────────
 
     template <typename Contract>
     CapabilityRef findBest(const CapabilityQuery& query) const {
         return findBest(Contract::capability, Contract::version, query);
+    }
+
+    template <typename Contract>
+    std::vector<CapabilityRef> findAll(const CapabilityQuery& query = {}) const {
+        return findAll(Contract::capability, Contract::version, query);
     }
 
     template <typename Contract>

@@ -4,6 +4,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include "core/app/Application.h"
+#include "providers/builtin_search/BuiltinSearchPlugin.h"
 #include "providers/core_asset/CoreAssetPlugin.h"
 #include "providers/local_file/LocalFilePlugin.h"
 #include "providers/local_audio/LocalAudioPlugin.h"
@@ -43,6 +44,7 @@ int main(int argc, char* argv[]) {
     std::string dbPath = (dataDir + "/clickin.db").toStdString();
 
     clickin::Application app;
+    app.addPlugin(std::make_unique<clickin::BuiltinSearchPlugin>());
     app.addPlugin(std::make_unique<clickin::CoreAssetPlugin>());
     app.addPlugin(std::make_unique<clickin::LocalFilePlugin>());
     app.addPlugin(std::make_unique<clickin::LocalAudioPlugin>());

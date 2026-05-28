@@ -7,6 +7,7 @@
 #include "sdk/contracts/builtin/AssetKindContract.h"
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
 #include "sdk/contracts/builtin/AssetRef.h"
+#include "sdk/contracts/builtin/AssetSearchContract.h"
 
 #include <QAbstractTableModel>
 #include <QDir>
@@ -15,9 +16,11 @@
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
 #include <QTableView>
+#include <QTimer>
 #include <QVBoxLayout>
 
 // ── Asset table model ─────────────────────────────────────────────────────────
@@ -72,8 +75,10 @@ private:
 
 struct AssetListView::Impl {
     clickin::Application& app;
-    AssetTableModel* model = nullptr;
-    QTableView*      table = nullptr;
+    AssetTableModel* model         = nullptr;
+    QTableView*      table         = nullptr;
+    QLineEdit*       searchBar     = nullptr;
+    QTimer*          debounceTimer = nullptr;
 
     explicit Impl(clickin::Application& a) : app(a) {}
 };
@@ -86,6 +91,16 @@ AssetListView::AssetListView(clickin::Application& app, QWidget* parent)
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+
+    impl_->searchBar = new QLineEdit(this);
+    impl_->searchBar->setPlaceholderText("Search assets…");
+    impl_->searchBar->setClearButtonEnabled(true);
+    layout->addWidget(impl_->searchBar);
+
+    impl_->debounceTimer = new QTimer(this);
+    impl_->debounceTimer->setSingleShot(true);
+    impl_->debounceTimer->setInterval(300);
 
     impl_->model = new AssetTableModel(this);
     impl_->table = new QTableView(this);
@@ -112,6 +127,10 @@ AssetListView::AssetListView(clickin::Application& app, QWidget* parent)
             this, &AssetListView::onDoubleClicked);
     connect(impl_->table, &QTableView::customContextMenuRequested,
             this, &AssetListView::onContextMenuRequested);
+    connect(impl_->searchBar, &QLineEdit::textChanged,
+            this, &AssetListView::onSearchTextChanged);
+    connect(impl_->debounceTimer, &QTimer::timeout,
+            this, &AssetListView::onSearchDebounced);
 
     refresh();
 }
@@ -220,4 +239,29 @@ void AssetListView::onContextMenuRequested(const QPoint& pos) {
         emit showDetailsRequested(assetId);
     }
     // (future: invoke AssetExecuteActionContract for other actions)
+}
+
+void AssetListView::onSearchTextChanged(const QString&) {
+    impl_->debounceTimer->start();
+}
+
+void AssetListView::onSearchDebounced() {
+    QString query = impl_->searchBar->text().trimmed();
+    if (query.isEmpty()) {
+        refresh();
+        return;
+    }
+
+    auto ctx    = impl_->app.coreContext();
+    auto ref    = ctx.capabilities.findBest<clickin::AssetSearchContract>(clickin::CapabilityQuery{});
+    if (!ref.valid()) {
+        refresh();
+        return;
+    }
+
+    clickin::AssetSearchContract::Request req;
+    req.query = query.toStdString();
+    auto results = ctx.capabilities
+        .invoke<clickin::AssetSearchContract>(ref, req).get();
+    impl_->model->setAssets(std::move(results.assets));
 }

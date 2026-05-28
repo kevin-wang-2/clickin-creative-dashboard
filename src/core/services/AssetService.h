@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sdk/AssetRecord.h"
 #include <optional>
 #include <string>
 #include <vector>
@@ -7,15 +8,6 @@
 namespace clickin {
 
 class Database;
-
-using AssetId = std::string;
-
-struct AssetRecord {
-    AssetId     id;
-    std::string name;
-    std::string kind;     // e.g. "audio.wav", "audio.mp3", "" if unknown
-    std::string status;   // active | missing | deleted
-};
 
 struct AssetProviderRecord {
     std::string id;

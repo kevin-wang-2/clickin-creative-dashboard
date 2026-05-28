@@ -25,6 +25,8 @@ protected:
 private slots:
     void onContextMenuRequested(const QPoint& pos);
     void onDoubleClicked(const QModelIndex& index);
+    void onSearchTextChanged(const QString& text);
+    void onSearchDebounced();
 
 private:
     struct Impl;

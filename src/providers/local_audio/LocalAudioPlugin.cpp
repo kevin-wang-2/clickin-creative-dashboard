@@ -546,8 +546,10 @@ public:
 
     std::string_view providerId() const override { return pluginId_; }
 
-    CapabilityDescriptor describe(const CapabilityQuery&) override {
-        return {.available = true, .priority = 10};
+    CapabilityDescriptor describe(const CapabilityQuery& query) override {
+        if (query.assetId.empty()) return {.available = true, .priority = 10};
+        std::string path = resolveLocalPath(broker_, AssetRef{query.assetId, ""});
+        return {.available = isKnownAudioPath(path), .priority = 10};
     }
 
 protected:

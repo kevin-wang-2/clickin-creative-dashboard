@@ -6,11 +6,12 @@ std::vector<Migration> coreSchemaV1() {
     return {
     {
         .version     = 1,
-        .description = "Core tables: asset, metadata, cache, job, plugin_registry, settings",
+        .description = "Initial schema: all core and hierarchy tables",
         .sql         = R"sql(
 CREATE TABLE asset (
     id         TEXT PRIMARY KEY,
     name       TEXT NOT NULL,
+    kind       TEXT NOT NULL DEFAULT '',
     status     TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -23,6 +24,8 @@ CREATE TABLE asset_provider (
     uri         TEXT NOT NULL,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE UNIQUE INDEX asset_provider_uri_unique ON asset_provider(uri);
 
 CREATE TABLE asset_provider_capability (
     id          TEXT PRIMARY KEY,
@@ -89,52 +92,17 @@ CREATE TABLE settings (
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-)sql"
-    },
-    {
-        .version     = 2,
-        .description = "Unique index on asset_provider.uri for discovery deduplication",
-        .sql         = R"sql(
-CREATE UNIQUE INDEX asset_provider_uri_unique ON asset_provider(uri);
-)sql"
-    },
-    {
-        .version     = 3,
-        .description = "Add kind column to asset table",
-        .sql         = R"sql(
-ALTER TABLE asset ADD COLUMN kind TEXT NOT NULL DEFAULT '';
-)sql"
-    },
-    {
-        .version     = 4,
-        .description = "Asset hierarchy: asset_parents and asset_nodes tables",
-        .sql         = R"sql(
-CREATE TABLE asset_nodes (
-    plugin_id TEXT NOT NULL,
-    asset_id  TEXT NOT NULL,
-    PRIMARY KEY (plugin_id, asset_id)
-);
-
-CREATE TABLE asset_parents (
-    plugin_id TEXT NOT NULL,
-    parent_id TEXT NOT NULL,
-    child_id  TEXT NOT NULL,
-    PRIMARY KEY (plugin_id, parent_id, child_id)
-);
-)sql"
-    },
-    {
-        .version     = 5,
-        .description = "Hierarchy refactor: node-node forest model replaces asset-asset edges",
-        .sql         = R"sql(
-DROP TABLE asset_parents;
-DROP TABLE asset_nodes;
 
 CREATE TABLE hierarchy_nodes (
-    node_id   TEXT NOT NULL PRIMARY KEY,
-    plugin_id TEXT NOT NULL,
-    asset_id  TEXT NOT NULL
+    node_id        TEXT NOT NULL PRIMARY KEY,
+    plugin_id      TEXT NOT NULL,
+    plugin_node_id TEXT NOT NULL DEFAULT '',
+    asset_id       TEXT NOT NULL,
+    is_root        INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE UNIQUE INDEX idx_hierarchy_nodes_plugin ON hierarchy_nodes(plugin_id, plugin_node_id)
+    WHERE plugin_node_id != '';
 
 CREATE TABLE hierarchy_edges (
     parent_node_id TEXT NOT NULL,

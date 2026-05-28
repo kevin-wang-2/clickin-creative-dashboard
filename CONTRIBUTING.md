@@ -196,6 +196,95 @@ Put all four steps in a single `.sql` string — the migration runs inside a tra
 
 If a migration fails, the transaction is rolled back and the version is **not** written to `schema_migration`. The runner will retry it on the next startup. There is no "downgrade" path — if a broken migration reaches `main`, the fix must come as a new, higher-versioned migration (not by editing the old one).
 
+---
+
+## Asset hierarchy
+
+### Overview
+
+The asset hierarchy is a **read-through cache** maintained by Core. Plugins own their graph data; Core caches it in `hierarchy_nodes / hierarchy_edges` for fast UI queries. The two sides communicate through three built-in contracts:
+
+| Contract | Capability string | Direction |
+|---|---|---|
+| `AssetHierarchyRootsContract` | `builtin.asset.hierarchy.roots` | Core → Plugin: "give me your root nodes" |
+| `AssetHierarchyChildrenContract` | `builtin.asset.hierarchy.children` | Core → Plugin: "give me children of node X" |
+| `AssetHierarchyVersionContract` | `builtin.asset.hierarchy.version` | Core → Plugin: "has your graph changed?" |
+
+A plugin is the sole owner of its graph. Core never writes to the plugin's data — it only queries the three contracts above and writes to its own cache tables.
+
+### Plugin contract
+
+```
+hierarchy_nodes        ← Core-managed cache
+hierarchy_edges        ← Core-managed cache
+     ↑ written by traverse()
+CapabilityBroker
+     ↑ queried by traverse()
+[Your Plugin]
+  HierarchyRootsHandler   → returns []HierarchyNode{nodeId, assetId, hasChildren}
+  HierarchyChildrenHandler → given nodeId, returns []HierarchyNode
+  HierarchyVersionHandler  → returns an opaque version token (or "" = always dirty)
+```
+
+**`HierarchyNode`** has three fields:
+
+```cpp
+struct HierarchyNode {
+    std::string nodeId;          // plugin-defined stable identifier
+    std::string assetId;         // core asset table id
+    bool        hasChildren = false;
+};
+```
+
+- `nodeId` is **plugin-defined and opaque to Core**. It is the key the plugin will receive in `AssetHierarchyChildrenContract::Request::nodeId`. It must be stable across re-traversals so that Core can preserve node UUIDs (see `upsertNode`).
+- `assetId` must match a row in the `asset` table. Create/find the asset before returning the node.
+- `hasChildren` is a hint — set it to `true` if the node has children; Core will call `AssetHierarchyChildrenContract` for it. Setting it conservatively (always `true`) is safe but triggers an extra round-trip.
+
+### What a plugin stores internally — no prescription
+
+Core does not care how a plugin stores its graph. The three handlers are the only interface. Examples:
+
+- **`builtin.local_file`** — writes a newline-delimited adjacency list into `MetadataService` during directory scan (roots, per-parent child lists, version UUID). The handlers read back from MetadataService.
+- A **network/cloud plugin** might keep no local state at all; it queries a remote API in `RootsHandler` / `ChildrenHandler` directly and returns `""` as the version so Core always re-traverses.
+- An **AI tagging plugin** might derive the graph from embedding clusters recomputed periodically, storing results in its own plugin DB table.
+
+The contract is the interface; the storage is the plugin's concern.
+
+### Core-side traverse flow
+
+`HierarchyService::traverse(pluginId, broker)` runs a BFS:
+
+1. Calls `AssetHierarchyRootsContract` → gets root `HierarchyNode` list.
+2. Calls `clearEdgesForPlugin(pluginId)` to reset this plugin's edges.
+3. For each root, calls `upsertNode(pluginId, node.nodeId, node.assetId)` which **preserves the stable Core UUID** if the same `pluginNodeId` was seen before.
+4. For every node with `hasChildren = true`, calls `AssetHierarchyChildrenContract` and recurses (BFS).
+5. Calls `pruneNodes(pluginId, visitedNodeIds)` to delete any of this plugin's nodes not reached in this traversal.
+
+`HierarchyService::checkAndTraverse(pluginId, broker, settings)` wraps the above with a version check:
+
+- Calls `AssetHierarchyVersionContract` to get a token.
+- Compares it against the last-stored token in `SettingsService` (key: `"hierarchy.version.<pluginId>"`).
+- Skips traversal if tokens match; runs `traverse` and updates the stored token if different (or if the plugin returns `""`).
+
+`HierarchyService::traverseAll(broker, settings)` calls `checkAndTraverse` for every plugin that has registered a `AssetHierarchyRootsContract` handler.
+
+### When to trigger traversal
+
+| Trigger | Recommended call |
+|---|---|
+| App startup, after all plugins are loaded | `traverseAll(broker, settings)` |
+| After a plugin's scan/sync operation completes | `traverse(pluginId, broker)` directly (bypasses version check, always refreshes) |
+| Periodic background poll | `checkAndTraverse(pluginId, broker, settings)` |
+
+### Node UUID stability
+
+Core generates a UUID per `(pluginId, pluginNodeId)` pair on first traversal and **reuses it on all subsequent traversals**. This means UI nodeIds remain stable across re-scans, and any state tied to a nodeId (selection, expansion) survives a re-traverse.
+
+The `pluginNodeId` you choose should therefore be stable for the lifetime of a logical node:
+- For a file plugin: the file URI is a good choice.
+- For a cloud plugin: the remote item's permanent ID.
+- Avoid using transient values (sequence numbers, pointer addresses).
+
 **Build system**
 - CMake ≥ 3.25 required (for `cmake_path`, presets v3).
 - Use `CMakePresets.json` for per-platform build configs (debug/release, macOS/Windows).

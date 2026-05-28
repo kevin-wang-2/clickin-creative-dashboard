@@ -46,6 +46,11 @@ public:
         return QString::fromStdString(assets_[row].id);
     }
 
+    QString kindAt(int row) const {
+        if (row < 0 || row >= static_cast<int>(assets_.size())) return {};
+        return QString::fromStdString(assets_[row].kind);
+    }
+
     int rowCount(const QModelIndex& = {}) const override {
         return static_cast<int>(assets_.size());
     }
@@ -284,7 +289,13 @@ bool AssetListView::eventFilter(QObject* obj, QEvent* ev) {
         if (ke->key() == Qt::Key_Space) {
             auto idx = impl_->table->currentIndex();
             if (idx.isValid()) {
-                emit previewRequested(impl_->model->assetIdAt(idx.row()));
+                if (impl_->model->kindAt(idx.row()) == "folder") {
+                    QModelIndex nameIdx = impl_->model->index(idx.row(), 0);
+                    navigateInto(impl_->model->assetIdAt(idx.row()),
+                                 impl_->model->data(nameIdx, Qt::DisplayRole).toString());
+                } else {
+                    emit previewRequested(impl_->model->assetIdAt(idx.row()));
+                }
                 return true;
             }
         }
@@ -295,10 +306,7 @@ bool AssetListView::eventFilter(QObject* obj, QEvent* ev) {
 void AssetListView::onDoubleClicked(const QModelIndex& index) {
     if (!index.isValid()) return;
     QString assetId = impl_->model->assetIdAt(index.row());
-    // Check if this asset is a folder-like node (has children in hierarchy).
-    auto ctx = impl_->app.coreContext();
-    if (ctx.hierarchy.anyHasChildren(assetId.toStdString())) {
-        // Get name from the model for the breadcrumb label.
+    if (impl_->model->kindAt(index.row()) == "folder") {
         QModelIndex nameIdx = impl_->model->index(index.row(), 0);
         QString name = impl_->model->data(nameIdx, Qt::DisplayRole).toString();
         navigateInto(assetId, name);
@@ -312,12 +320,19 @@ void AssetListView::onContextMenuRequested(const QPoint& pos) {
     if (!idx.isValid()) return;
 
     QString assetId = impl_->model->assetIdAt(idx.row());
+    bool isFolder   = (impl_->model->kindAt(idx.row()) == "folder");
 
     QMenu menu(this);
 
-    // Default preview action (always shown)
-    QAction* previewAct = menu.addAction("Preview");
-    previewAct->setShortcut(Qt::Key_Space);
+    // Folders: navigate; non-folders: preview.
+    QAction* previewAct = nullptr;
+    QAction* openFolderAct = nullptr;
+    if (isFolder) {
+        openFolderAct = menu.addAction("Open");
+    } else {
+        previewAct = menu.addAction("Preview");
+        previewAct->setShortcut(Qt::Key_Space);
+    }
 
     menu.addSeparator();
     QAction* detailsAct = menu.addAction("Show Details");
@@ -343,6 +358,11 @@ void AssetListView::onContextMenuRequested(const QPoint& pos) {
     QAction* chosen = menu.exec(impl_->table->viewport()->mapToGlobal(pos));
     if (!chosen) return;
 
+    if (chosen == openFolderAct) {
+        QModelIndex nameIdx = impl_->model->index(idx.row(), 0);
+        navigateInto(assetId, impl_->model->data(nameIdx, Qt::DisplayRole).toString());
+        return;
+    }
     if (chosen == previewAct) {
         emit previewRequested(assetId);
         return;

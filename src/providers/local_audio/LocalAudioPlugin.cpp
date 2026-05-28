@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <set>
 
 namespace clickin {
 
@@ -339,6 +340,18 @@ static std::string resolveLocalPath(CapabilityBroker& broker, const AssetRef& re
     return res.uri.substr(7); // strip "file://"
 }
 
+// Returns true only if path points to a local file with a known audio extension.
+static bool isKnownAudioPath(const std::string& path) {
+    if (path.empty()) return false;
+    std::string ext = std::filesystem::path(path).extension().string();
+    for (auto& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+    static const std::set<std::string, std::less<>> kAudioExts = {
+        ".wav", ".wave", ".aif", ".aiff", ".mp3", ".flac", ".ogg",
+        ".m4a", ".aac", ".opus", ".wma"
+    };
+    return kAudioExts.count(ext) > 0;
+}
+
 // ── AudioMetadataHandler ──────────────────────────────────────────────────────
 
 class AudioMetadataHandler : public TypedCapabilityHandler<AudioMetadataContract> {
@@ -505,7 +518,11 @@ public:
 
 protected:
     CapabilityFuture<PreviewSessionRef>
-    invokeTyped(const AssetRef& req, CapabilityContext&) override {
+    invokeTyped(const AssetRef& req, CapabilityContext& ctx) override {
+        if (!ctx.broker()) return CapabilityFuture(PreviewSessionRef{});
+        std::string path = resolveLocalPath(*ctx.broker(), req);
+        if (!isKnownAudioPath(path)) return CapabilityFuture(PreviewSessionRef{});
+
         // Placeholder session ID — full QMediaPlayer integration in Phase 5.
         PreviewSessionRef ref;
         ref.sessionId    = pluginId_ + ":" + req.assetId;
@@ -536,6 +553,11 @@ public:
 protected:
     CapabilityFuture<AssetPreviewWidgetContract::Result>
     invokeTyped(const AssetRef& req, CapabilityContext&) override {
+        // Reject any asset whose path doesn't have a supported audio extension.
+        std::string path = resolveLocalPath(broker_, req);
+        if (!isKnownAudioPath(path))
+            return CapabilityFuture(AssetPreviewWidgetContract::Result{});
+
         std::string assetId = req.assetId;
         CapabilityBroker* brokerPtr = &broker_;
 

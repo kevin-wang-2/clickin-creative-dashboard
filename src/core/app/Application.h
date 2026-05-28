@@ -10,6 +10,7 @@ class QWidget;
 namespace clickin {
 
 class IPlugin;
+class WorkerPool;
 struct CoreContext;
 
 class Application {

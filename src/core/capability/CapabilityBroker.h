@@ -6,18 +6,39 @@
 
 namespace clickin {
 
+class WorkerPool;
+class MetadataService;
+class CacheService;
+class AssetService;
+class SettingsService;
+
 class CapabilityBroker {
 public:
     explicit CapabilityBroker(CapabilityRegistry& registry);
 
+    // ── Service injection (called by Application after services are created) ──
+    // The broker does not own these services; they must outlive the broker.
+    // Application::shutdown() must destroy the WorkerPool (joining all threads)
+    // before destroying the registry or services.
+    struct Services {
+        WorkerPool*      workerPool = nullptr;
+        MetadataService* metadata   = nullptr;
+        CacheService*    cache      = nullptr;
+        AssetService*    assets     = nullptr;
+        SettingsService* settings   = nullptr;
+    };
+    void setServices(Services services);
+
     // ── Raw dispatch (non-template, lives in .cpp) ────────────────────────────
-    // Performs: enabled check → describe() availability check → handler invoke.
-    // All error paths return a resolved CapabilityFuture with ok=false.
+    // Checks handler's ExecutionPolicy:
+    //   Sync      — invokes inline on calling thread (fast, no allocation).
+    //   Async     — posts to WorkerPool; returns an unresolved future.
+    //               Falls back to inline if WorkerPool is not injected (tests).
+    //   Subprocess — treated as Async until #23 is implemented.
     CapabilityFuture<RawResult>
     invokeRaw(const CapabilityRef& ref, RawRequest request);
 
     // Find the highest-priority *available and enabled* handler.
-    // Returns an invalid CapabilityRef (valid()==false) if none found.
     CapabilityRef findBest(std::string_view capability, int version,
                            const CapabilityQuery& query) const;
 
@@ -28,7 +49,7 @@ public:
     // ── Typed wrappers (header-only, thin shell) ──────────────────────────────
 
     template <typename Contract>
-    CapabilityRef findBest(const CapabilityQuery& query) const {
+    CapabilityRef findBest(const CapabilityQuery& query = {}) const {
         return findBest(Contract::capability, Contract::version, query);
     }
 
@@ -45,18 +66,11 @@ public:
 
         return invokeRaw(ref, std::move(raw)).then(
             [](const RawResult& rawResult) -> typename Contract::Result {
-                if (!rawResult.ok) {
-                    // Propagate the error as a default-constructed result.
-                    // Callers should check the RawResult directly for errors;
-                    // this path is reached only when callers use .then() chains.
-                    return {};
-                }
+                if (!rawResult.ok) return {};
                 return CapabilityCodec<Contract>::decodeResult(rawResult);
-            }
-        );
+            });
     }
 
-    // Convenience: findBest + invoke in one call.
     template <typename Contract>
     CapabilityFuture<typename Contract::Result>
     call(const CapabilityQuery& query, const typename Contract::Request& request) {
@@ -67,11 +81,14 @@ public:
     CapabilityRegistry& registry() { return registry_; }
 
 private:
+    CapabilityContext makeContext();
+
     static RawResult makeError(std::string_view capability, int version,
                                 std::string_view errorCode,
                                 std::string_view message);
 
     CapabilityRegistry& registry_;
+    Services            services_;
 };
 
 } // namespace clickin

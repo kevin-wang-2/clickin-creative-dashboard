@@ -1,5 +1,6 @@
 add_library(clickin_core STATIC
     types/AssetId.cpp
+    worker/WorkerPool.cpp
     capability/CapabilityFuture.cpp
     capability/CapabilityRegistry.cpp
     capability/CapabilityBroker.cpp

@@ -176,7 +176,8 @@ public:
                      MetadataService& meta, HierarchyService& hier)
         : pluginId_(pluginId), assets_(assets), meta_(meta), hier_(hier) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Async; }
 
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
@@ -308,7 +309,8 @@ public:
     HierarchyRootsHandler(const std::string& pluginId, MetadataService& meta)
         : pluginId_(pluginId), meta_(meta) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
     }
@@ -336,7 +338,8 @@ public:
     HierarchyChildrenHandler(const std::string& pluginId, MetadataService& meta)
         : pluginId_(pluginId), meta_(meta) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
     }
@@ -367,7 +370,8 @@ public:
     HierarchyVersionHandler(const std::string& pluginId, MetadataService& meta)
         : pluginId_(pluginId), meta_(meta) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
     }
@@ -391,7 +395,8 @@ public:
     LocatorHandler(const std::string& pluginId, MetadataService& meta)
         : pluginId_(pluginId), meta_(meta) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
 
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
@@ -422,7 +427,8 @@ public:
     NameHandler(const std::string& pluginId, MetadataService& meta)
         : pluginId_(pluginId), meta_(meta) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
     }
@@ -448,7 +454,8 @@ public:
     KindHandler(const std::string& pluginId, MetadataService& meta)
         : pluginId_(pluginId), meta_(meta) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
     }
@@ -474,7 +481,8 @@ class OpenActionsHandler : public TypedCapabilityHandler<AssetOpenActionsContrac
 public:
     explicit OpenActionsHandler(const std::string& pluginId) : pluginId_(pluginId) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
     }
@@ -502,7 +510,8 @@ public:
     ExecuteActionHandler(const std::string& pluginId, MetadataService& meta)
         : pluginId_(pluginId), meta_(meta) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
     }
@@ -550,7 +559,8 @@ public:
     LocalFileDiscoverTabHandler(const std::string& pluginId, AssetService& assets)
         : pluginId_(pluginId), assets_(assets) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 10};
     }

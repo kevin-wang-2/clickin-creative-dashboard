@@ -17,7 +17,8 @@ public:
     SearchHandler(const std::string& pluginId, AssetService& assets)
         : pluginId_(pluginId), assets_(assets) {}
 
-    std::string_view providerId() const override { return pluginId_; }
+    std::string_view providerId()      const override { return pluginId_; }
+    ExecutionPolicy  executionPolicy() const override { return ExecutionPolicy::Sync; }
 
     CapabilityDescriptor describe(const CapabilityQuery&) override {
         return {.available = true, .priority = 1};  // low priority — better plugins can override

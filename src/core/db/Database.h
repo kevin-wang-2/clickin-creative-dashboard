@@ -64,6 +64,7 @@ public:
     bool rollback();
 
     int64_t     lastInsertRowId() const;
+    int         changes()         const;  // rows affected by the last INSERT/UPDATE/DELETE
     std::string lastError()       const;
 
     // Generates a random UUID v4 string.

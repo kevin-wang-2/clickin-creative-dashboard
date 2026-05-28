@@ -144,6 +144,10 @@ int64_t Database::lastInsertRowId() const {
     return sqlite3_last_insert_rowid(impl_->db);
 }
 
+int Database::changes() const {
+    return sqlite3_changes(impl_->db);
+}
+
 std::string Database::lastError() const {
     if (!impl_->db) return "database not open";
     return sqlite3_errmsg(impl_->db);

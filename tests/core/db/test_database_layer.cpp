@@ -36,11 +36,13 @@ protected:
 // ── Migration ─────────────────────────────────────────────────────────────────
 
 TEST_F(DbTest, CoreTablesExistAfterInit) {
-    // schema_migration must have exactly 1 row (consolidated baseline schema)
+    // schema_migration must have exactly 2 rows (v1 baseline + v2 uri unique index)
     auto stmt = db().prepare("SELECT version FROM schema_migration ORDER BY version;");
     ASSERT_TRUE(stmt.has_value());
     ASSERT_TRUE(stmt->step());
     EXPECT_EQ(stmt->columnInt64(0), 1);
+    ASSERT_TRUE(stmt->step());
+    EXPECT_EQ(stmt->columnInt64(0), 2);
     EXPECT_FALSE(stmt->step());
 }
 
@@ -53,7 +55,7 @@ TEST_F(DbTest, SecondInitSkipsMigration) {
     auto stmt = svc2.db().prepare("SELECT count(*) FROM schema_migration;");
     ASSERT_TRUE(stmt.has_value());
     stmt->step();
-    EXPECT_EQ(stmt->columnInt64(0), 1);  // still only 1 row, none re-applied
+    EXPECT_EQ(stmt->columnInt64(0), 2);  // still only 2 rows, none re-applied
 }
 
 TEST_F(DbTest, PluginMigrationAddedBeforeInit) {
@@ -207,6 +209,35 @@ TEST_F(DbTest, AssetDeleteHidesFromList) {
 
     assets.deleteAsset(id);
     EXPECT_TRUE(assets.listAssets().empty());
+}
+
+TEST_F(DbTest, FindAssetByUriReturnsId) {
+    AssetService assets(db());
+    auto id = assets.createAsset("track");
+    assets.createAssetProvider(id, "builtin.local_file", "file:///tmp/track.wav");
+
+    EXPECT_EQ(assets.findAssetByUri("file:///tmp/track.wav"), id);
+    EXPECT_TRUE(assets.findAssetByUri("file:///tmp/other.wav").empty());
+}
+
+TEST_F(DbTest, FindAssetByUriMissingReturnsEmpty) {
+    AssetService assets(db());
+    EXPECT_TRUE(assets.findAssetByUri("file:///no/such/file.wav").empty());
+}
+
+TEST_F(DbTest, DuplicateProviderUriRejected) {
+    // The unique index on asset_provider.uri must prevent inserting the same URI twice.
+    AssetService assets(db());
+    auto id1 = assets.createAsset("first");
+    assets.createAssetProvider(id1, "builtin.local_file", "file:///dup.wav");
+
+    auto id2 = assets.createAsset("second");
+    // Second createAssetProvider with the same URI should silently fail (stmt->step() returns false).
+    auto r = assets.createAssetProvider(id2, "builtin.local_file", "file:///dup.wav");
+    EXPECT_TRUE(r.empty());
+
+    // The original mapping must still be intact.
+    EXPECT_EQ(assets.findAssetByUri("file:///dup.wav"), id1);
 }
 
 // ── SettingsService ───────────────────────────────────────────────────────────

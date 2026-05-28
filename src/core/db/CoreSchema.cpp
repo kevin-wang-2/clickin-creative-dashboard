@@ -90,6 +90,13 @@ CREATE TABLE settings (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 )sql"
+    },
+    {
+        .version     = 2,
+        .description = "Unique index on asset_provider.uri for discovery deduplication",
+        .sql         = R"sql(
+CREATE UNIQUE INDEX asset_provider_uri_unique ON asset_provider(uri);
+)sql"
     }};
 }
 

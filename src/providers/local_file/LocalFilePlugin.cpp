@@ -10,6 +10,7 @@
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
 
 #include <QDesktopServices>
+#include <QDir>
 #include <QGroupBox>
 #include <QLabel>
 #include <QProcess>

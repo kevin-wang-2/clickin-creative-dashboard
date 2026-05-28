@@ -30,11 +30,13 @@ clickin-creative-dashboard/
 │   │   ├── IRawCapabilityHandler.h
 │   │   ├── TypedCapabilityHandler.h
 │   │   ├── CapabilityCodec.h
-│   │   └── contracts/              # Versioned capability contracts (builtin + domain)
-│   │       ├── builtin/            # builtin.asset.*, builtin.asset.discovery, …
-│   │       └── media/              # media.audio.waveform, media.audio.preview, …
+│   │   └── contracts/
+│   │       ├── builtin/            # Built-in contracts (see "Capability contract scopes" below)
+│   │       └── ui/                 # UI contracts (AssetPreviewWidgetContract, …)
 │   │
-│   ├── providers/                  # Built-in plugin implementations
+│   ├── providers/                  # Built-in plugin implementations + domain contract libraries
+│   │   ├── audio/                  # Audio domain — INTERFACE library (headers only)
+│   │   │   └── contracts/          # AudioMetadataContract, AudioWaveformContract, AudioPreviewContract
 │   │   ├── core_asset/             # builtin.core_asset — fallback presentation
 │   │   ├── local_file/             # builtin.local_file — folder discovery, file locator
 │   │   └── local_audio/            # builtin.local_audio — metadata, waveform, preview
@@ -45,8 +47,7 @@ clickin-creative-dashboard/
 │       ├── plugin_mgmt/            # Plugin management view
 │       ├── inspector/              # Asset inspector / details panel
 │       ├── job_status/             # Background job / status bar
-│       └── audio_preview/          # Audio domain UI — waveform widget + playback controls
-│                                   # (depends on media.audio.* capabilities, not Core UI)
+│       └── preview_host/           # Generic preview host — hosts plugin-contributed widgets
 │
 ├── tests/
 │   ├── core/                       # Unit tests for capability system, DB layer, services
@@ -63,7 +64,56 @@ clickin-creative-dashboard/
 - **`src/core/`** must not include any domain headers (audio, video, file paths). It only knows about its own types and the SDK interfaces.
 - **`src/sdk/`** is the only thing external/future plugins would depend on. Keep it stable and minimal.
 - **`src/ui/shell/`, `asset_list/`, `plugin_mgmt/`, `inspector/`** are Core UI — they may only use `builtin.*` capabilities.
-- **`src/ui/audio_preview/`** is a domain UI module — it is allowed to depend on `media.audio.*` capabilities.
+- **`src/ui/preview_host/`** is Core UI that hosts plugin-contributed widgets; it uses `AssetPreviewWidgetContract` (a UI contract in `sdk/contracts/ui/`) and has no domain knowledge.
+
+---
+
+## Capability contract scopes
+
+Capability contracts (`struct FooContract { ... }`) fall into three scopes that determine where their headers live and which CMake target owns them.
+
+### 1. Built-in — `sdk/contracts/builtin/` and `sdk/contracts/ui/`
+
+Contracts defined and owned by Core. Every plugin and every UI module may depend on them freely. Examples: `AssetDiscoveryContract`, `AssetLocatorContract`, `AssetOpenActionsContract`, `AssetPreviewWidgetContract`.
+
+These headers are part of `clickin_core`'s public interface. No extra CMake dependency is needed.
+
+### 2. Domain-specific — `providers/<domain>/contracts/`
+
+Contracts that define the shared interface for a capability domain that **multiple independent plugins** implement or consume. The domain module is a **header-only CMake `INTERFACE` library**. Plugins depend on the domain library, not on any specific implementation plugin.
+
+```
+providers/
+  audio/                  ← CMake INTERFACE target: audio_domain
+    contracts/
+      AudioMetadataContract.h
+      AudioWaveformContract.h
+      AudioPreviewContract.h
+  local_audio/            ← links PUBLIC audio_domain (implements the contracts)
+  portaudio_preview/      ← links PUBLIC audio_domain (future; also implements the contracts)
+```
+
+**Rules:**
+- The domain directory contains **only headers** — no `.cpp`, no implementation.
+- Any plugin that implements or consumes domain contracts declares `target_link_libraries(my_plugin PUBLIC <domain>_domain)`.
+- Plugins never depend on each other to get at domain contracts. `portaudio_preview` must NOT link `local_audio` just to get audio headers.
+
+**Adding a new domain:**
+1. Create `providers/<domain>/CMakeLists.txt` with a single `INTERFACE` target.
+2. Add `add_subdirectory(<domain>)` to `providers/CMakeLists.txt` **before** any implementing plugin.
+3. Document the new domain in this section.
+
+**Current domains:**
+
+| Domain | CMake target | Contracts |
+|--------|-------------|-----------|
+| Audio  | `audio_domain` | `AudioMetadataContract`, `AudioWaveformContract`, `AudioPreviewContract` |
+
+### 3. Plugin-private — `providers/<plugin>/contracts/` (or inline in the plugin's headers)
+
+Contracts used exclusively within a single plugin's ecosystem — only that plugin implements them, and no other plugin is expected to implement or directly consume them. Exposed as `PUBLIC` headers of the plugin's own CMake target. Consumers depend on the plugin target directly.
+
+> **When in doubt:** if you expect only one implementation to ever exist and the contract is tightly coupled to a specific plugin, keep it plugin-private. If you can imagine a second independent implementation, it belongs in a domain library.
 
 ---
 

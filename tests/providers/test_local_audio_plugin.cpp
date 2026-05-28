@@ -12,9 +12,9 @@
 #include "core/services/SettingsService.h"
 #include "core/db/Database.h"
 #include "sdk/contracts/builtin/AssetDiscoveryContract.h"
-#include "sdk/contracts/media/AudioMetadataContract.h"
-#include "sdk/contracts/media/AudioWaveformContract.h"
-#include "sdk/contracts/media/AudioPreviewContract.h"
+#include "providers/audio/contracts/AudioMetadataContract.h"
+#include "providers/audio/contracts/AudioWaveformContract.h"
+#include "providers/audio/contracts/AudioPreviewContract.h"
 
 #include <filesystem>
 #include <fstream>

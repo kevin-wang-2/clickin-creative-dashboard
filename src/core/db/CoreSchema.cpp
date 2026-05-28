@@ -79,6 +79,7 @@ CREATE TABLE job (
 CREATE TABLE plugin_registry (
     plugin_id     TEXT PRIMARY KEY,
     enabled       INTEGER NOT NULL DEFAULT 1,
+    load_status   TEXT NOT NULL DEFAULT 'active',
     config        TEXT,
     registered_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -89,12 +90,6 @@ CREATE TABLE settings (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 )sql"
-    },
-    {
-        .version     = 2,
-        .description = "plugin_registry: add load_status column",
-        .sql         = "ALTER TABLE plugin_registry ADD COLUMN"
-                       " load_status TEXT NOT NULL DEFAULT 'active';"
     }};
 }
 

@@ -1,6 +1,7 @@
 #include "providers/local_file/LocalFilePlugin.h"
 #include "core/app/CoreContext.h"
 #include "core/services/AssetService.h"
+#include "core/services/HierarchyService.h"
 #include "core/services/MetadataService.h"
 #include "sdk/TypedCapabilityHandler.h"
 #include "sdk/contracts/builtin/AssetDiscoveryContract.h"
@@ -22,6 +23,7 @@
 #include <array>
 #include <filesystem>
 #include <set>
+#include <stack>
 #include <string>
 
 namespace clickin {
@@ -77,8 +79,9 @@ static std::string readFilePath(MetadataService& meta, const std::string& plugin
 // builtin.asset.discovery:v1
 class DiscoveryHandler : public TypedCapabilityHandler<AssetDiscoveryContract> {
 public:
-    DiscoveryHandler(const std::string& pluginId, AssetService& assets, MetadataService& meta)
-        : pluginId_(pluginId), assets_(assets), meta_(meta) {}
+    DiscoveryHandler(const std::string& pluginId, AssetService& assets,
+                     MetadataService& meta, HierarchyService& hier)
+        : pluginId_(pluginId), assets_(assets), meta_(meta), hier_(hier) {}
 
     std::string_view providerId() const override { return pluginId_; }
 
@@ -97,37 +100,70 @@ protected:
         std::error_code ec;
         if (!std::filesystem::is_directory(root, ec)) return CapabilityFuture(result);
 
-        for (auto& entry : std::filesystem::recursive_directory_iterator(
-                 root, std::filesystem::directory_options::skip_permission_denied, ec)) {
-            if (!entry.is_regular_file()) continue;
-            if (!isSupportedAudio(entry.path())) continue;
+        // Find or create the root folder asset.
+        std::string rootUri      = "file://" + root.string();
+        std::string rootAssetId  = assets_.findAssetByUri(rootUri);
+        if (rootAssetId.empty()) {
+            rootAssetId = assets_.createAsset(root.filename().string(), "folder");
+            assets_.createAssetProvider(rootAssetId, pluginId_, rootUri);
+            storeFilePath(meta_, pluginId_, rootAssetId, root.string());
+        }
 
-            std::string name = entry.path().stem().string();
-            std::string path = entry.path().string();
-            int64_t size = static_cast<int64_t>(std::filesystem::file_size(entry.path(), ec));
-            std::string uri = "file://" + path;
+        // Clear stale hierarchy for this root before rebuilding.
+        hier_.removeAllByPlugin(pluginId_, rootAssetId);
+        hier_.markNode(pluginId_, rootAssetId);
 
-            // Skip if this URI is already tracked by any provider.
-            if (!assets_.findAssetByUri(uri).empty()) continue;
+        // Iterative DFS to build the hierarchy.
+        struct Frame { std::filesystem::path path; std::string assetId; };
+        std::stack<Frame> stack;
+        stack.push({root, rootAssetId});
 
-            std::string ext = entry.path().extension().string();
-            for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            std::string kind = extensionToKind(ext);
+        while (!stack.empty()) {
+            auto [dirPath, dirAssetId] = stack.top();
+            stack.pop();
 
-            std::string assetId = assets_.createAsset(name, kind);
-            assets_.createAssetProvider(assetId, pluginId_, uri);
-            storeFilePath(meta_, pluginId_, assetId, path);
+            for (auto& entry : std::filesystem::directory_iterator(
+                     dirPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
+                if (entry.is_directory(ec)) {
+                    std::string subUri     = "file://" + entry.path().string();
+                    std::string subAssetId = assets_.findAssetByUri(subUri);
+                    if (subAssetId.empty()) {
+                        subAssetId = assets_.createAsset(
+                            entry.path().filename().string(), "folder");
+                        assets_.createAssetProvider(subAssetId, pluginId_, subUri);
+                        storeFilePath(meta_, pluginId_, subAssetId, entry.path().string());
+                    }
+                    hier_.addParent(pluginId_, dirAssetId, subAssetId);
+                    stack.push({entry.path(), subAssetId});
 
-            result.assets.push_back({name, pluginId_, {}, size});
+                } else if (entry.is_regular_file(ec) && isSupportedAudio(entry.path())) {
+                    std::string fileUri     = "file://" + entry.path().string();
+                    std::string fileAssetId = assets_.findAssetByUri(fileUri);
+                    if (fileAssetId.empty()) {
+                        std::string name = entry.path().stem().string();
+                        std::string ext  = entry.path().extension().string();
+                        for (auto& c : ext)
+                            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        int64_t size = static_cast<int64_t>(
+                            std::filesystem::file_size(entry.path(), ec));
+                        fileAssetId = assets_.createAsset(name, extensionToKind(ext));
+                        assets_.createAssetProvider(fileAssetId, pluginId_, fileUri);
+                        storeFilePath(meta_, pluginId_, fileAssetId, entry.path().string());
+                        result.assets.push_back({name, pluginId_, {}, size});
+                    }
+                    hier_.addParent(pluginId_, dirAssetId, fileAssetId);
+                }
+            }
         }
 
         return CapabilityFuture(result);
     }
 
 private:
-    std::string      pluginId_;
-    AssetService&    assets_;
-    MetadataService& meta_;
+    std::string       pluginId_;
+    AssetService&     assets_;
+    MetadataService&  meta_;
+    HierarchyService& hier_;
 };
 
 // builtin.provide_locator:v1
@@ -298,16 +334,17 @@ PluginManifest LocalFilePlugin::manifest() const {
 }
 
 void LocalFilePlugin::initialize(PluginContext& ctx) {
-    pluginId_ = ctx.pluginId;
-    assets_   = &ctx.core.assets;
-    metadata_ = &ctx.core.metadata;
+    pluginId_  = ctx.pluginId;
+    assets_    = &ctx.core.assets;
+    metadata_  = &ctx.core.metadata;
+    hierarchy_ = &ctx.core.hierarchy;
 }
 
 void LocalFilePlugin::shutdown() {}
 
 std::vector<std::unique_ptr<IRawCapabilityHandler>> LocalFilePlugin::createCapabilityHandlers() {
     std::vector<std::unique_ptr<IRawCapabilityHandler>> h;
-    h.push_back(std::make_unique<DiscoveryHandler>    (pluginId_, *assets_, *metadata_));
+    h.push_back(std::make_unique<DiscoveryHandler>    (pluginId_, *assets_, *metadata_, *hierarchy_));
     h.push_back(std::make_unique<LocatorHandler>      (pluginId_, *metadata_));
     h.push_back(std::make_unique<NameHandler>         (pluginId_, *metadata_));
     h.push_back(std::make_unique<KindHandler>         (pluginId_, *metadata_));

@@ -9,6 +9,7 @@
 #include "core/services/CacheService.h"
 #include "core/services/JobService.h"
 #include "core/services/SettingsService.h"
+#include "core/services/HierarchyService.h"
 
 #include <filesystem>
 #include <stdexcept>
@@ -79,24 +80,25 @@ protected:
         ASSERT_TRUE(dbSvc_->initialize());
 
         auto& db = dbSvc_->db();
-        assets_   = std::make_unique<AssetService>(db);
-        metadata_ = std::make_unique<MetadataService>(db);
-        cache_    = std::make_unique<CacheService>(db);
-        jobs_     = std::make_unique<JobService>();
-        settings_ = std::make_unique<SettingsService>(db);
-        capReg_   = std::make_unique<CapabilityRegistry>();
-        broker_   = std::make_unique<CapabilityBroker>(*capReg_);
+        assets_    = std::make_unique<AssetService>(db);
+        metadata_  = std::make_unique<MetadataService>(db);
+        cache_     = std::make_unique<CacheService>(db);
+        jobs_      = std::make_unique<JobService>();
+        settings_  = std::make_unique<SettingsService>(db);
+        hierarchy_ = std::make_unique<HierarchyService>(db);
+        capReg_    = std::make_unique<CapabilityRegistry>();
+        broker_    = std::make_unique<CapabilityBroker>(*capReg_);
     }
 
     void TearDown() override {
         broker_.reset(); capReg_.reset();
-        settings_.reset(); jobs_.reset(); cache_.reset();
+        settings_.reset(); hierarchy_.reset(); jobs_.reset(); cache_.reset();
         metadata_.reset(); assets_.reset(); dbSvc_.reset();
         std::filesystem::remove(path_);
     }
 
     CoreContext ctx() {
-        return {*dbSvc_, *assets_, *metadata_, *cache_, *jobs_, *settings_, *broker_};
+        return {*dbSvc_, *assets_, *metadata_, *cache_, *jobs_, *settings_, *hierarchy_, *broker_};
     }
 
     std::string path_;
@@ -106,6 +108,7 @@ protected:
     std::unique_ptr<CacheService>       cache_;
     std::unique_ptr<JobService>         jobs_;
     std::unique_ptr<SettingsService>    settings_;
+    std::unique_ptr<HierarchyService>   hierarchy_;
     std::unique_ptr<CapabilityRegistry> capReg_;
     std::unique_ptr<CapabilityBroker>   broker_;
 };

@@ -12,6 +12,7 @@ add_library(clickin_core STATIC
     services/CacheService.cpp
     services/JobService.cpp
     services/SettingsService.cpp
+    services/HierarchyService.cpp
     app/CoreContext.cpp
     app/Application.cpp
     app/PluginManager.cpp

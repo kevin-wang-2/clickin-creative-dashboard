@@ -104,6 +104,24 @@ CREATE UNIQUE INDEX asset_provider_uri_unique ON asset_provider(uri);
         .sql         = R"sql(
 ALTER TABLE asset ADD COLUMN kind TEXT NOT NULL DEFAULT '';
 )sql"
+    },
+    {
+        .version     = 4,
+        .description = "Asset hierarchy: asset_parents and asset_nodes tables",
+        .sql         = R"sql(
+CREATE TABLE asset_nodes (
+    plugin_id TEXT NOT NULL,
+    asset_id  TEXT NOT NULL,
+    PRIMARY KEY (plugin_id, asset_id)
+);
+
+CREATE TABLE asset_parents (
+    plugin_id TEXT NOT NULL,
+    parent_id TEXT NOT NULL,
+    child_id  TEXT NOT NULL,
+    PRIMARY KEY (plugin_id, parent_id, child_id)
+);
+)sql"
     }};
 }
 

@@ -6,6 +6,7 @@
 #include "core/services/CacheService.h"
 #include "core/services/JobService.h"
 #include "core/services/SettingsService.h"
+#include "core/services/HierarchyService.h"
 #include "core/capability/CapabilityBroker.h"
 
 namespace clickin {
@@ -17,6 +18,7 @@ struct CoreContext {
     CacheService&      cache;
     JobService&        jobs;
     SettingsService&   settings;
+    HierarchyService&  hierarchy;
     CapabilityBroker&  capabilities;
 };
 

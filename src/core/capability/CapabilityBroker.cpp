@@ -43,6 +43,24 @@ CapabilityBroker::invokeRaw(const CapabilityRef& ref, RawRequest request) {
     return entry->handler->invokeRaw(request, ctx);
 }
 
+std::vector<CapabilityRef> CapabilityBroker::findAll(
+    std::string_view capability, int version, const CapabilityQuery& query) const
+{
+    auto entries = registry_.findHandlers(capability, version);
+    std::vector<CapabilityRef> result;
+    for (const auto* e : entries) {
+        if (!e->enabled) continue;
+        auto desc = e->handler->describe(query);
+        if (desc.available)
+            result.push_back({
+                std::string(e->handler->providerId()),
+                std::string(capability),
+                version
+            });
+    }
+    return result;
+}
+
 CapabilityRef CapabilityBroker::findBest(std::string_view capability, int version,
                                           const CapabilityQuery& query) const {
     auto entries = registry_.findHandlers(capability, version);

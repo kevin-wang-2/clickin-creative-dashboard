@@ -3,6 +3,8 @@
 
 namespace clickin {
 
+class AssetService;
+
 class BuiltinSearchPlugin : public IPlugin {
 public:
     PluginManifest manifest() const override;

@@ -36,13 +36,15 @@ protected:
 // ── Migration ─────────────────────────────────────────────────────────────────
 
 TEST_F(DbTest, CoreTablesExistAfterInit) {
-    // schema_migration must have exactly 2 rows (v1 baseline + v2 uri unique index)
+    // schema_migration must have exactly 3 rows (v1 baseline, v2 uri index, v3 kind column)
     auto stmt = db().prepare("SELECT version FROM schema_migration ORDER BY version;");
     ASSERT_TRUE(stmt.has_value());
     ASSERT_TRUE(stmt->step());
     EXPECT_EQ(stmt->columnInt64(0), 1);
     ASSERT_TRUE(stmt->step());
     EXPECT_EQ(stmt->columnInt64(0), 2);
+    ASSERT_TRUE(stmt->step());
+    EXPECT_EQ(stmt->columnInt64(0), 3);
     EXPECT_FALSE(stmt->step());
 }
 
@@ -55,7 +57,7 @@ TEST_F(DbTest, SecondInitSkipsMigration) {
     auto stmt = svc2.db().prepare("SELECT count(*) FROM schema_migration;");
     ASSERT_TRUE(stmt.has_value());
     stmt->step();
-    EXPECT_EQ(stmt->columnInt64(0), 2);  // still only 2 rows, none re-applied
+    EXPECT_EQ(stmt->columnInt64(0), 3);  // still only 3 rows, none re-applied
 }
 
 TEST_F(DbTest, PluginMigrationAddedBeforeInit) {
@@ -226,18 +228,48 @@ TEST_F(DbTest, FindAssetByUriMissingReturnsEmpty) {
 }
 
 TEST_F(DbTest, DuplicateProviderUriRejected) {
-    // The unique index on asset_provider.uri must prevent inserting the same URI twice.
     AssetService assets(db());
     auto id1 = assets.createAsset("first");
     assets.createAssetProvider(id1, "builtin.local_file", "file:///dup.wav");
 
     auto id2 = assets.createAsset("second");
-    // Second createAssetProvider with the same URI should silently fail (stmt->step() returns false).
     auto r = assets.createAssetProvider(id2, "builtin.local_file", "file:///dup.wav");
     EXPECT_TRUE(r.empty());
-
-    // The original mapping must still be intact.
     EXPECT_EQ(assets.findAssetByUri("file:///dup.wav"), id1);
+}
+
+TEST_F(DbTest, AssetKindStoredOnCreate) {
+    AssetService assets(db());
+    auto id = assets.createAsset("kick.wav", "audio.wav");
+
+    auto rec = assets.getAsset(id);
+    EXPECT_EQ(rec.kind, "audio.wav");
+}
+
+TEST_F(DbTest, AssetKindDefaultsEmpty) {
+    AssetService assets(db());
+    auto id = assets.createAsset("unknown");
+
+    auto rec = assets.getAsset(id);
+    EXPECT_TRUE(rec.kind.empty());
+}
+
+TEST_F(DbTest, AssetKindSetAfterCreate) {
+    AssetService assets(db());
+    auto id = assets.createAsset("track");
+
+    assets.setAssetKind(id, "audio.mp3");
+    auto rec = assets.getAsset(id);
+    EXPECT_EQ(rec.kind, "audio.mp3");
+}
+
+TEST_F(DbTest, AssetKindIncludedInList) {
+    AssetService assets(db());
+    assets.createAsset("snare.flac", "audio.flac");
+
+    auto list = assets.listAssets();
+    ASSERT_EQ(list.size(), 1u);
+    EXPECT_EQ(list[0].kind, "audio.flac");
 }
 
 // ── SettingsService ───────────────────────────────────────────────────────────

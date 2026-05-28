@@ -7,7 +7,7 @@ AssetService::AssetService(Database& db) : db_(db) {}
 
 std::vector<AssetRecord> AssetService::listAssets() const {
     auto stmt = db_.prepare(
-        "SELECT id, name, status FROM asset WHERE status != 'deleted' ORDER BY name;"
+        "SELECT id, name, kind, status FROM asset WHERE status != 'deleted' ORDER BY name;"
     );
     if (!stmt) return {};
 
@@ -16,7 +16,8 @@ std::vector<AssetRecord> AssetService::listAssets() const {
         AssetRecord r;
         r.id     = stmt->columnText(0);
         r.name   = stmt->columnText(1);
-        r.status = stmt->columnText(2);
+        r.kind   = stmt->columnText(2);
+        r.status = stmt->columnText(3);
         result.push_back(std::move(r));
     }
     return result;
@@ -24,7 +25,7 @@ std::vector<AssetRecord> AssetService::listAssets() const {
 
 AssetRecord AssetService::getAsset(const AssetId& id) const {
     auto stmt = db_.prepare(
-        "SELECT id, name, status FROM asset WHERE id = ? LIMIT 1;"
+        "SELECT id, name, kind, status FROM asset WHERE id = ? LIMIT 1;"
     );
     if (!stmt) return {};
     stmt->bindText(1, id);
@@ -33,19 +34,29 @@ AssetRecord AssetService::getAsset(const AssetId& id) const {
     AssetRecord r;
     r.id     = stmt->columnText(0);
     r.name   = stmt->columnText(1);
-    r.status = stmt->columnText(2);
+    r.kind   = stmt->columnText(2);
+    r.status = stmt->columnText(3);
     return r;
 }
 
-AssetId AssetService::createAsset(const std::string& name) {
+AssetId AssetService::createAsset(const std::string& name, const std::string& kind) {
     std::string id = Database::generateId();
     auto stmt = db_.prepare(
-        "INSERT INTO asset (id, name) VALUES (?, ?);"
+        "INSERT INTO asset (id, name, kind) VALUES (?, ?, ?);"
     );
     if (!stmt) return {};
-    stmt->bindText(1, id).bindText(2, name);
+    stmt->bindText(1, id).bindText(2, name).bindText(3, kind);
     stmt->step();
     return id;
+}
+
+void AssetService::setAssetKind(const AssetId& id, const std::string& kind) {
+    auto stmt = db_.prepare(
+        "UPDATE asset SET kind = ?, updated_at = datetime('now') WHERE id = ?;"
+    );
+    if (!stmt) return;
+    stmt->bindText(1, kind).bindText(2, id);
+    stmt->step();
 }
 
 void AssetService::deleteAsset(const AssetId& id) {

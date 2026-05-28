@@ -104,7 +104,11 @@ protected:
             // Skip if this URI is already tracked by any provider.
             if (!assets_.findAssetByUri(uri).empty()) continue;
 
-            std::string assetId = assets_.createAsset(name);
+            std::string ext = entry.path().extension().string();
+            for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            std::string kind = extensionToKind(ext);
+
+            std::string assetId = assets_.createAsset(name, kind);
             assets_.createAssetProvider(assetId, pluginId_, uri);
             storeFilePath(meta_, pluginId_, assetId, path);
 

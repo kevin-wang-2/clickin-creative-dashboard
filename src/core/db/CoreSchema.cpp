@@ -97,6 +97,13 @@ CREATE TABLE settings (
         .sql         = R"sql(
 CREATE UNIQUE INDEX asset_provider_uri_unique ON asset_provider(uri);
 )sql"
+    },
+    {
+        .version     = 3,
+        .description = "Add kind column to asset table",
+        .sql         = R"sql(
+ALTER TABLE asset ADD COLUMN kind TEXT NOT NULL DEFAULT '';
+)sql"
     }};
 }
 

@@ -9,10 +9,12 @@
 #include "sdk/contracts/builtin/AssetOpenActionsContract.h"
 #include "sdk/contracts/builtin/AssetRef.h"
 #include "sdk/contracts/builtin/AssetSearchContract.h"
+#include "sdk/contracts/builtin/AssetThumbnailContract.h"
 #include "sdk/contracts/ui/AssetPreviewWidgetContract.h"
 #include <QPointer>
 
 #include <QAbstractTableModel>
+#include <QApplication>
 #include <QDir>
 #include <QEvent>
 #include <QFileDialog>
@@ -24,7 +26,10 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPushButton>
+#include <QSet>
+#include <QStyle>
 #include <QTableView>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -33,12 +38,14 @@
 
 class AssetTableModel : public QAbstractTableModel {
 public:
-    explicit AssetTableModel(QObject* parent = nullptr)
-        : QAbstractTableModel(parent) {}
+    explicit AssetTableModel(clickin::Application* app, QObject* parent = nullptr)
+        : QAbstractTableModel(parent), app_(app) {}
 
     void setNodes(std::vector<clickin::NodeRecord> nodes) {
         beginResetModel();
         nodes_ = std::move(nodes);
+        iconCache_.clear();
+        pendingLoads_.clear();
         endResetModel();
     }
 
@@ -62,31 +69,111 @@ public:
     int rowCount(const QModelIndex& = {}) const override {
         return static_cast<int>(nodes_.size());
     }
-    int columnCount(const QModelIndex& = {}) const override { return 3; }
+    int columnCount(const QModelIndex& = {}) const override { return 4; }
 
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override {
         if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
         switch (section) {
-            case 0: return "Name";
-            case 1: return "Type";
-            case 2: return "Status";
+            case 0: return "";
+            case 1: return "Name";
+            case 2: return "Type";
+            case 3: return "Status";
         }
         return {};
     }
 
     QVariant data(const QModelIndex& index, int role) const override {
-        if (!index.isValid() || role != Qt::DisplayRole) return {};
+        if (!index.isValid()) return {};
         const auto& n = nodes_[index.row()];
+
+        if (index.column() == 0) {
+            if (role != Qt::DecorationRole) return {};
+            QString assetId = QString::fromStdString(n.assetId);
+            if (iconCache_.contains(assetId))
+                return iconCache_[assetId];
+            if (!assetId.isEmpty() && !pendingLoads_.contains(assetId))
+                requestIcon(assetId, QString::fromStdString(n.kind));
+            return kindFallbackIcon(QString::fromStdString(n.kind));
+        }
+
+        if (role != Qt::DisplayRole) return {};
         switch (index.column()) {
-            case 0: return QString::fromStdString(n.name);
-            case 1: return n.kind.empty() ? QString("—") : QString::fromStdString(n.kind);
-            case 2: return QString::fromStdString(n.status);
+            case 1: return QString::fromStdString(n.name);
+            case 2: return n.kind.empty() ? QString("—") : QString::fromStdString(n.kind);
+            case 3: return QString::fromStdString(n.status);
         }
         return {};
     }
 
 private:
+    void requestIcon(const QString& assetId, const QString& kind) const {
+        if (!app_) return;
+        pendingLoads_.insert(assetId);
+
+        auto ctx = app_->coreContext();
+        auto ref = ctx.capabilities.findBest<clickin::AssetThumbnailContract>(
+            clickin::CapabilityQuery{});
+        if (!ref.valid()) {
+            pendingLoads_.remove(assetId);
+            return;
+        }
+
+        auto* self = const_cast<AssetTableModel*>(this);
+        clickin::thenOnUi(
+            ctx.capabilities.invoke<clickin::AssetThumbnailContract>(
+                ref, clickin::AssetRef{assetId.toStdString(), ""}),
+            self,
+            [self, assetId, kind](clickin::AssetThumbnailDescriptor desc) {
+                self->pendingLoads_.remove(assetId);
+                QPixmap px = resolveDescriptor(desc, kind);
+                if (!px.isNull())
+                    self->iconCache_[assetId] =
+                        px.scaled(24, 24, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                // Find the current row for this asset (may have shifted since the request).
+                int r = self->rowForAssetId(assetId);
+                if (r >= 0) {
+                    QModelIndex idx = self->index(r, 0);
+                    emit self->dataChanged(idx, idx, {Qt::DecorationRole});
+                }
+            });
+    }
+
+    int rowForAssetId(const QString& assetId) const {
+        for (int i = 0; i < static_cast<int>(nodes_.size()); ++i)
+            if (QString::fromStdString(nodes_[i].assetId) == assetId) return i;
+        return -1;
+    }
+
+    static QPixmap resolveDescriptor(const clickin::AssetThumbnailDescriptor& desc,
+                                      const QString& kind) {
+        using Kind = clickin::AssetThumbnailDescriptor::Kind;
+        switch (desc.kind) {
+            case Kind::Icon: {
+                QIcon icon = QIcon::fromTheme(QString::fromStdString(desc.iconKey));
+                if (!icon.isNull()) return icon.pixmap(24, 24);
+                break;
+            }
+            case Kind::Image: {
+                QPixmap px(QString::fromStdString(desc.uri));
+                if (!px.isNull()) return px;
+                break;
+            }
+            default: break;
+        }
+        return kindFallbackIcon(kind);
+    }
+
+    static QPixmap kindFallbackIcon(const QString& kind) {
+        auto* style = QApplication::style();
+        if (kind == "folder")
+            return style->standardPixmap(QStyle::SP_DirIcon);
+        return style->standardPixmap(QStyle::SP_FileIcon);
+    }
+
+    clickin::Application*           app_ = nullptr;
     std::vector<clickin::NodeRecord> nodes_;
+    mutable QHash<QString, QPixmap>  iconCache_;
+    mutable QSet<QString>            pendingLoads_;
 };
 
 // ── Impl ──────────────────────────────────────────────────────────────────────
@@ -136,15 +223,17 @@ AssetListView::AssetListView(clickin::Application& app, QWidget* parent)
     impl_->debounceTimer->setSingleShot(true);
     impl_->debounceTimer->setInterval(300);
 
-    impl_->model = new AssetTableModel(this);
+    impl_->model = new AssetTableModel(&app, this);
     impl_->table = new QTableView(this);
     impl_->table->setModel(impl_->model);
     impl_->table->setSelectionBehavior(QAbstractItemView::SelectRows);
     impl_->table->setSelectionMode(QAbstractItemView::SingleSelection);
     impl_->table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    impl_->table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    impl_->table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    impl_->table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+    impl_->table->setColumnWidth(0, 36);
+    impl_->table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     impl_->table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    impl_->table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     impl_->table->verticalHeader()->hide();
     impl_->table->setContextMenuPolicy(Qt::CustomContextMenu);
 

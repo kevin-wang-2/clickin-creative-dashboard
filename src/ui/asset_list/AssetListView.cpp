@@ -368,7 +368,7 @@ bool AssetListView::eventFilter(QObject* obj, QEvent* ev) {
             auto idx = impl_->table->currentIndex();
             if (idx.isValid()) {
                 if (impl_->model->kindAt(idx.row()) == "folder") {
-                    QModelIndex nameIdx = impl_->model->index(idx.row(), 0);
+                    QModelIndex nameIdx = impl_->model->index(idx.row(), 1);
                     navigateInto(impl_->model->nodeIdAt(idx.row()),
                                  impl_->model->assetIdAt(idx.row()),
                                  impl_->model->data(nameIdx, Qt::DisplayRole).toString());
@@ -385,7 +385,7 @@ bool AssetListView::eventFilter(QObject* obj, QEvent* ev) {
 void AssetListView::onDoubleClicked(const QModelIndex& index) {
     if (!index.isValid()) return;
     if (impl_->model->kindAt(index.row()) == "folder") {
-        QModelIndex nameIdx = impl_->model->index(index.row(), 0);
+        QModelIndex nameIdx = impl_->model->index(index.row(), 1);
         navigateInto(impl_->model->nodeIdAt(index.row()),
                      impl_->model->assetIdAt(index.row()),
                      impl_->model->data(nameIdx, Qt::DisplayRole).toString());
@@ -444,7 +444,7 @@ void AssetListView::onContextMenuRequested(const QPoint& pos) {
     if (!chosen) return;
 
     if (chosen == openFolderAct) {
-        QModelIndex nameIdx = impl_->model->index(idx.row(), 0);
+        QModelIndex nameIdx = impl_->model->index(idx.row(), 1);
         navigateInto(impl_->model->nodeIdAt(idx.row()),
                      assetId,
                      impl_->model->data(nameIdx, Qt::DisplayRole).toString());
